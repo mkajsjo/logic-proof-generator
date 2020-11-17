@@ -202,9 +202,15 @@ prove({Premises, '|-', Conclusion}) ->
             {#{}, #{}},
             [Conclusion | Premises]
         ),
+    Given =
+        lists:foldl(
+            fun deconstruct/2,
+            maps:from_list([{P, true} || P <- Premises]),
+            Premises
+        ),
     f(
         #proof_struct{
-            given = maps:from_list([{P, true} || P <- Premises]),
+            given = Given,
             sought = Sought,
             dependency_graph = DependencyGraph,
             conclusion = Conclusion,
@@ -236,7 +242,7 @@ construct({A, '&', B} = Expr, Given) ->
         #{A := _, B := _} ->
             Expr;
         _ ->
-            deconstruct(Expr, Given, maps:keys(Given))
+            hehe
     end;
 construct({A, '|', B} = Expr, Given) ->
     case Given of
@@ -245,14 +251,14 @@ construct({A, '|', B} = Expr, Given) ->
         #{B := _} ->
             Expr;
         _ ->
-            deconstruct(Expr, Given, maps:keys(Given))
+            hehe
     end;
 construct({'!', {'!', A}} = Expr, Given) ->
     case Given of
         #{A := _} ->
             Expr;
         _ ->
-            deconstruct(Expr, Given, maps:keys(Given))
+            hehe
     end;
 construct(Expr, Given) ->
     case Given of
@@ -261,55 +267,168 @@ construct(Expr, Given) ->
         #{Expr := _} ->
             Expr;
         _ ->
-            deconstruct(Expr, Given, maps:keys(Given))
+            hehe
     end.
 
 
-deconstruct(_, _, []) ->
-    hehe;
-deconstruct(Expr, Given, [G | Gs]) ->
-    case G of
-        {Expr, '&', _} ->
-            Expr;
-        {_, '&', Expr} ->
-            Expr;
-        {Key, '->', Expr} ->
-            case Given of
-                #{Key := _} ->
-                    Expr;
-                _ ->
-                    hehe
-            end;
-        {'!', {'!', Expr}} ->
-            Expr;
-        _ ->
-            deconstruct(Expr, Given, Gs)
-    end.
-
-
+deconstruct(false, Given) ->
+    Given#{false => true};
 deconstruct({A, '&', B}, Given) ->
     Given2 = Given#{A => true, B => true},
     Given3 = deconstruct(A, Given2),
     deconstruct(B, Given3);
 deconstruct({A, '->', B}, Given) ->
-    NotB = {'!', B},
-    case Given of
-        #{A := _} ->
-            Given2 = Given#{B => true},
-            deconstruct(B, Given2);
-        #{NotB := _} ->
-            Given2 = Given#{{'!', A} => true},
-            deconstruct({'!', A}, Given2)
-    end;
+    Given2 = deconstruct_helper(A, B, Given),
+    deconstruct_helper({'!', B}, {'!', A}, Given2);
 deconstruct({'!', {'!', Expr}}, Given) ->
     Given2 = Given#{Expr => true},
     deconstruct(Expr, Given2);
 deconstruct({'!', Expr}, Given) ->
-    case Given of
-        #{Expr := _} ->
-            false;
-        _ ->
-            Given
-    end;
+    deconstruct_helper(Expr, false, Given);
 deconstruct(_, Given) ->
     Given.
+
+
+deconstruct_helper(Key, Value, Given) ->
+    case Given of
+        #{Key := _} ->
+            deconstruct(Value, Given#{Value => true});
+        _ ->
+            Given
+    end.
+
+
+%---
+
+
+-record(
+   ps,
+   {
+        proved = #{},
+        assumption,
+        proved_in_assumption = #{},
+        elim_blocked = #{},
+        intro_blocked = #{}
+   }
+).
+
+
+intro({A, '&', B} = Expr, PS) ->
+    case {is_proved(A, PS), is_proved(B, PS)} of
+        {true, true} ->
+            add_proof(Expr, PS);
+        {false, true} ->
+            add_intro_blocked(A, Expr, PS);
+        {true, false} ->
+            add_intro_blocked(B, Expr, PS);
+        _ ->
+            add_intro_blocked(
+                B,
+                Expr,
+                add_intro_blocked(A, Expr, PS)
+            )
+    end;
+intro({A, '|', B} = Expr, PS) ->
+    PS2 =
+        case is_proved(A, PS) of
+            true ->
+                add_proof(Expr, PS);
+            false ->
+                add_intro_blocked(A, Expr, PS)
+        end,
+    case is_proved(B, PS) of
+        true ->
+            add_proof(Expr, PS);
+        false ->
+            add_intro_blocked(B, Expr, PS)
+    end;
+intro({'!', {'!', A}} = Expr, PS) ->
+    case is_proved(A, PS) of
+        true ->
+            add_proof(Expr, PS);
+        false ->
+            add_intro_blocked(A, Expr, PS)
+    end.
+
+
+elim(Expr, PS0) ->
+    PS = elim_(Expr, PS0),
+    case is_proved({'!', Expr}, PS) of
+        true ->
+            add_proof(false, PS);
+        false ->
+            add_elim_blocked({'!', Expr}, Expr, PS)
+    end.
+
+
+elim_({A, '&', B}, PS) ->
+    add_proof(
+        B,
+        add_proof(A, PS)
+    );
+elim_({A, '->', B} = Expr, PS) ->
+    PS2 =
+        case is_proved(A, PS) of
+            true ->
+                add_proof(B, PS);
+            false ->
+                add_elim_blocked(A, Expr, PS)
+        end,
+    case is_proved({'!', B}, PS) of
+        true ->
+            add_proof({'!', A}, PS);
+        false ->
+            add_elim_blocked({'!', B}, Expr, PS)
+    end;
+elim_({'!', {'!', A}} = Expr, PS) ->
+    add_proof(A, PS);
+elim_({'!', A} = Expr, PS) ->
+    case is_proved(A, PS) of
+        true ->
+            add_proof(false, PS);
+        false ->
+            add_elim_blocked(A, false, PS)
+    end.
+
+
+add_proof(Expr, PS) ->
+    case is_proved(Expr, PS) of
+        true ->
+            PS;
+        false ->
+            add_proof_(Expr, PS)
+    end.
+
+
+add_proof_(Expr, #ps{assumption = undefined} = PS) ->
+    PS#ps{proved = (PS#ps.proved)#{Expr => true}};
+add_proof_(Expr, PS) ->
+    PS#ps{proved_in_assumption = (PS#ps.proved_in_assumption)#{Expr => true}}.
+
+
+is_proved(Expr, PS) ->
+    maps:is_key(Expr, PS#ps.proved) orelse
+    maps:is_key(Expr, PS#ps.proved_in_assumption).
+
+
+add_intro_blocked(Key, Expr, PS) ->
+    case is_proved(Expr, PS) of
+        true ->
+            PS;
+        false ->
+            BlockedByKey = maps:get(Key, PS#ps.intro_blocked, []),
+            PS#ps{intro_blocked = (PS#ps.intro_blocked)#{Key => [Expr | BlockedByKey]}}
+    end.
+
+
+add_elim_blocked(Key, Expr, PS) ->
+    case is_proved(Expr, PS) of
+        true ->
+            PS;
+        false ->
+            BlockedByKey = maps:get(Key, PS#ps.elim_blocked, []),
+            PS#ps{elim_blocked = (PS#ps.elim_blocked)#{Key => [Expr | BlockedByKey]}}
+    end.
+
+
+
