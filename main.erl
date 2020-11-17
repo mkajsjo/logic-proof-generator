@@ -351,17 +351,30 @@ prove_(PS) ->
             PS2,
             maps:keys(PS2#ps.elim_blocked)
         ),
-    case maps:is_key(PS3#ps.conclusion, PS3#ps.proved) of
-        true ->
+    ProofFound = maps:is_key(PS3#ps.conclusion, PS3#ps.proved),
+    BottomFound = maps:is_key(false, PS3#ps.proved),
+    NrProvedAfter = maps:size(PS3#ps.proved),
+    if
+        ProofFound ->
             proof_found;
-        false ->
-            NrProvedAfter = maps:size(PS3#ps.proved),
-            case NrProvedAfter =:= NrProvedBefore of
+        BottomFound ->
+            proof_found_by_bottom; %TODO just proof_found
+        NrProvedAfter =:= NrProvedBefore ->
+            PS4 =
+                lists:foldl(
+                    fun start_assumption/2,
+                    PS3,
+                    assumable(PS3)
+                ),
+            NrProvedAfter2 = maps:size(PS4#ps.proved),
+            case NrProvedAfter2 =:= NrProvedBefore of
                 true ->
                     no_proof_found;
                 false ->
-                    prove_(PS3#ps{queue = maps:keys(PS3#ps.intro_blocked)})
-            end
+                    prove_(PS4#ps{queue = maps:keys(PS3#ps.intro_blocked)})
+            end;
+        true ->
+            prove_(PS3#ps{queue = maps:keys(PS3#ps.intro_blocked)})
     end.
 
 
@@ -449,14 +462,14 @@ add_proof(Expr, PS) ->
     PS3 =
         lists:foldl(
             fun intro/2,
-            PS2,
+            PS2#ps{intro_blocked = maps:remove(Expr, PS2#ps.intro_blocked)},
             IntroBlocked
         ),
     ElimBlocked = maps:get(Expr, PS3#ps.elim_blocked, []),
     PS4 =
         lists:foldl(
             fun elim/2,
-            PS3,
+            PS3#ps{elim_blocked = maps:remove(Expr, PS3#ps.elim_blocked)},
             ElimBlocked
         ),
     elim(Expr, PS4).
@@ -483,4 +496,86 @@ add_elim_blocked(Key, Expr, PS) ->
     PS#ps{elim_blocked = (PS#ps.elim_blocked)#{Key => [Expr | BlockedByKey]}}.
 
 
+assumable(#ps{intro_blocked = IB, elim_blocked = EB, assumption = Ass} = PS) ->
+    [
+        A
+    ||
+        A <- maps:keys(maps:merge(IB, EB)),
+        not is_proved(A, PS),
+        not is_proved({'!', A}, PS),
+        A =/= Ass
+    ].
 
+
+start_assumption(Assumption, #ps{assumption = OldAssumption} = PS) ->
+    Proved = maps:merge(PS#ps.proved, PS#ps.proved_in_assumption),
+    Proved2 =
+        case OldAssumption of
+            undefined ->
+                Proved;
+            _ ->
+                maps:put(OldAssumption, true, Proved)
+        end,
+    assumption(
+        PS#ps{
+            assumption = Assumption,
+            proved = Proved2,
+            proved_in_assumption = #{}
+        }
+    ).
+
+
+assumption(PS) ->
+    NrProvedBefore = maps:size(PS#ps.proved),
+    PS2 =
+        lists:foldl(
+            fun intro/2,
+            PS,
+            PS#ps.queue
+        ),
+    PS3 =
+        lists:foldl(
+            fun intro/2,
+            PS2,
+            maps:keys(PS2#ps.elim_blocked)
+        ),
+    BottomFound = maps:is_key(false, PS3#ps.proved),
+    NrProvedAfter = maps:size(PS3#ps.proved),
+    if
+        BottomFound ->
+            end_assumption(PS3);
+        NrProvedAfter =:= NrProvedBefore ->
+            PS4 =
+                lists:foldl(
+                    fun start_assumption/2,
+                    PS3,
+                    assumable(PS3)
+                ),
+            NrProvedAfter2 = maps:size(PS4#ps.proved),
+            case NrProvedAfter2 =:= NrProvedBefore of
+                true ->
+                    end_assumption(PS4);
+                false ->
+                    assumption(PS4#ps{queue = maps:keys(PS3#ps.intro_blocked)})
+            end;
+        true ->
+            assumption(PS3#ps{queue = maps:keys(PS3#ps.intro_blocked)})
+    end.
+
+
+end_assumption(#ps{proved_in_assumption = Proved, assumption = Assumption} = PS0) ->
+    PS = PS0#ps{proved_in_assumption = #{}, assumption = undefined},
+    PS2 =
+        case is_proved(false, PS) of
+            true ->
+                add_proof({'!', Assumption}, PS);
+            false ->
+                PS
+        end,
+    lists:foldl(
+        fun (N, Acc) ->
+                add_proof({Assumption, '->', N}, Acc)
+        end,
+        PS2,
+        maps:keys(Proved)
+    ).
