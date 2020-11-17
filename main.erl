@@ -195,46 +195,46 @@ foo(P, {Map, Exprs}) ->
     {Map, Exprs2}.
 
 
-prove({Premises, '|-', Conclusion}) ->
-    {DependencyGraph, Sought} =
-        lists:foldl(
-            fun foo/2,
-            {#{}, #{}},
-            [Conclusion | Premises]
-        ),
-    Given =
-        lists:foldl(
-            fun deconstruct/2,
-            maps:from_list([{P, true} || P <- Premises]),
-            Premises
-        ),
-    f(
-        #proof_struct{
-            given = Given,
-            sought = Sought,
-            dependency_graph = DependencyGraph,
-            conclusion = Conclusion,
-            queue = maps:keys(Sought)
-        }
-    ).
+%prove({Premises, '|-', Conclusion}) ->
+%    {DependencyGraph, Sought} =
+%        lists:foldl(
+%            fun foo/2,
+%            {#{}, #{}},
+%            [Conclusion | Premises]
+%        ),
+%    Given =
+%        lists:foldl(
+%            fun deconstruct/2,
+%            maps:from_list([{P, true} || P <- Premises]),
+%            Premises
+%        ),
+%    f(
+%        #proof_struct{
+%            given = Given,
+%            sought = Sought,
+%            dependency_graph = DependencyGraph,
+%            conclusion = Conclusion,
+%            queue = maps:keys(Sought)
+%        }
+%    ).
 
 
-f(#proof_struct{queue = []}) ->
-    no_proof_found;
-f(#proof_struct{conclusion = Conclusion} = PS) ->
-    [Expr | Queue] = PS#proof_struct.queue,
-    case construct(Expr, PS#proof_struct.given) of
-        hehe ->
-            f(PS#proof_struct{queue = Queue});
-        Conclusion ->
-            proof_found;
-        Expr ->
-            Queue2 =
-                Queue ++ maps:get(Expr, PS#proof_struct.dependency_graph, []),
-            Given =
-                deconstruct(Expr, maps:put(Expr, true, PS#proof_struct.given)),
-            f(PS#proof_struct{queue = Queue2, given = Given})
-    end.
+%f(#proof_struct{queue = []}) ->
+%    no_proof_found;
+%f(#proof_struct{conclusion = Conclusion} = PS) ->
+%    [Expr | Queue] = PS#proof_struct.queue,
+%    case construct(Expr, PS#proof_struct.given) of
+%        hehe ->
+%            f(PS#proof_struct{queue = Queue});
+%        Conclusion ->
+%            proof_found;
+%        Expr ->
+%            Queue2 =
+%                Queue ++ maps:get(Expr, PS#proof_struct.dependency_graph, []),
+%            Given =
+%                deconstruct(Expr, maps:put(Expr, true, PS#proof_struct.given)),
+%            f(PS#proof_struct{queue = Queue2, given = Given})
+%    end.
 
 
 construct({A, '&', B} = Expr, Given) ->
@@ -308,18 +308,72 @@ deconstruct_helper(Key, Value, Given) ->
         assumption,
         proved_in_assumption = #{},
         elim_blocked = #{},
-        intro_blocked = #{}
+        intro_blocked = #{},
+        conclusion,
+        queue
    }
 ).
 
 
+prove({Premises, '|-', Conclusion}) ->
+    {_DependencyGraph, Sought} =
+        lists:foldl(
+            fun foo/2,
+            {#{}, #{}},
+            [Conclusion | Premises]
+        ),
+    Given =
+        lists:foldl(
+            fun deconstruct/2,
+            maps:from_list([{P, true} || P <- Premises]),
+            Premises
+        ),
+    prove_(
+        #ps{
+            proved = Given,
+            conclusion = Conclusion,
+            queue = maps:keys(Sought)
+        }
+    ).
+
+
+prove_(PS) ->
+    NrProvedBefore = maps:size(PS#ps.proved),
+    PS2 =
+        lists:foldl(
+            fun intro/2,
+            PS,
+            PS#ps.queue
+        ),
+    PS3 =
+        lists:foldl(
+            fun intro/2,
+            PS2,
+            maps:keys(PS2#ps.elim_blocked)
+        ),
+    case maps:is_key(PS3#ps.conclusion, PS3#ps.proved) of
+        true ->
+            proof_found;
+        false ->
+            NrProvedAfter = maps:size(PS3#ps.proved),
+            case NrProvedAfter =:= NrProvedBefore of
+                true ->
+                    no_proof_found;
+                false ->
+                    prove_(PS3#ps{queue = maps:keys(PS3#ps.intro_blocked)})
+            end
+    end.
+
+
 intro({A, '&', B} = Expr, PS) ->
-    case {is_proved(A, PS), is_proved(B, PS)} of
-        {true, true} ->
-            add_proof(Expr, PS);
-        {false, true} ->
+    case {is_proved(A, PS), is_proved(B, PS), is_proved(Expr, PS)} of
+        {_, _, true} ->
+            PS;
+        {true, true, _} ->
+            add_intro_proof(skip, Expr, PS);
+        {false, true, _} ->
             add_intro_blocked(A, Expr, PS);
-        {true, false} ->
+        {true, false, _} ->
             add_intro_blocked(B, Expr, PS);
         _ ->
             add_intro_blocked(
@@ -329,75 +383,83 @@ intro({A, '&', B} = Expr, PS) ->
             )
     end;
 intro({A, '|', B} = Expr, PS) ->
-    PS2 =
-        case is_proved(A, PS) of
-            true ->
-                add_proof(Expr, PS);
-            false ->
-                add_intro_blocked(A, Expr, PS)
-        end,
-    case is_proved(B, PS) of
-        true ->
-            add_proof(Expr, PS);
-        false ->
-            add_intro_blocked(B, Expr, PS)
-    end;
+    PS2 = add_intro_proof(A, Expr, PS),
+    add_intro_proof(
+        B,
+        Expr,
+        PS2
+    );
 intro({'!', {'!', A}} = Expr, PS) ->
-    case is_proved(A, PS) of
-        true ->
+    add_intro_proof(A, Expr, PS);
+intro(_, PS) ->
+    PS.
+
+
+add_intro_proof(Key, Expr, PS) ->
+    case {Key =:= skip orelse is_proved(Key, PS), is_proved(Expr, PS)} of
+        {_, true} ->
+            PS;
+        {true, false} ->
             add_proof(Expr, PS);
-        false ->
-            add_intro_blocked(A, Expr, PS)
+        {false, false} ->
+            add_intro_blocked(Key, Expr, PS)
     end.
 
 
 elim(Expr, PS0) ->
     PS = elim_(Expr, PS0),
-    case is_proved({'!', Expr}, PS) of
-        true ->
-            add_proof(false, PS);
-        false ->
-            add_elim_blocked({'!', Expr}, Expr, PS)
-    end.
+    add_elim_proof({'!', Expr}, false, PS).
 
 
 elim_({A, '&', B}, PS) ->
-    add_proof(
+    add_elim_proof(
+        skip,
         B,
-        add_proof(A, PS)
+        add_elim_proof(skip, A, PS)
     );
-elim_({A, '->', B} = Expr, PS) ->
-    PS2 =
-        case is_proved(A, PS) of
-            true ->
-                add_proof(B, PS);
-            false ->
-                add_elim_blocked(A, Expr, PS)
-        end,
-    case is_proved({'!', B}, PS) of
-        true ->
-            add_proof({'!', A}, PS);
-        false ->
-            add_elim_blocked({'!', B}, Expr, PS)
-    end;
-elim_({'!', {'!', A}} = Expr, PS) ->
-    add_proof(A, PS);
-elim_({'!', A} = Expr, PS) ->
-    case is_proved(A, PS) of
-        true ->
-            add_proof(false, PS);
-        false ->
-            add_elim_blocked(A, false, PS)
+elim_({A, '->', B}, PS) ->
+    PS2 = add_elim_proof(A, B, PS),
+    add_elim_proof(
+        {'!', B},
+        {'!', A},
+        PS2
+    );
+elim_({'!', {'!', A}}, PS) ->
+    add_elim_proof(skip, A, PS);
+elim_({'!', A}, PS) ->
+    add_elim_proof(A, false, PS);
+elim_(_, PS) ->
+    PS.
+
+
+add_elim_proof(Key, Expr, PS) ->
+    case {Key =:= skip orelse is_proved(Key, PS), is_proved(Expr, PS)} of
+        {_, true} ->
+            PS;
+        {true, false} ->
+            add_proof(Expr, PS);
+        {false, false} ->
+            add_elim_blocked(Key, Expr, PS)
     end.
 
 
 add_proof(Expr, PS) ->
-    case is_proved(Expr, PS) of
-        true ->
-            PS;
-        false ->
-            add_proof_(Expr, PS)
-    end.
+    PS2 = add_proof_(Expr, PS),
+    IntroBlocked = maps:get(Expr, PS2#ps.intro_blocked, []),
+    PS3 =
+        lists:foldl(
+            fun intro/2,
+            PS2,
+            IntroBlocked
+        ),
+    ElimBlocked = maps:get(Expr, PS3#ps.elim_blocked, []),
+    PS4 =
+        lists:foldl(
+            fun elim/2,
+            PS3,
+            ElimBlocked
+        ),
+    elim(Expr, PS4).
 
 
 add_proof_(Expr, #ps{assumption = undefined} = PS) ->
@@ -412,23 +474,13 @@ is_proved(Expr, PS) ->
 
 
 add_intro_blocked(Key, Expr, PS) ->
-    case is_proved(Expr, PS) of
-        true ->
-            PS;
-        false ->
-            BlockedByKey = maps:get(Key, PS#ps.intro_blocked, []),
-            PS#ps{intro_blocked = (PS#ps.intro_blocked)#{Key => [Expr | BlockedByKey]}}
-    end.
+    BlockedByKey = maps:get(Key, PS#ps.intro_blocked, []),
+    PS#ps{intro_blocked = (PS#ps.intro_blocked)#{Key => [Expr | BlockedByKey]}}.
 
 
 add_elim_blocked(Key, Expr, PS) ->
-    case is_proved(Expr, PS) of
-        true ->
-            PS;
-        false ->
-            BlockedByKey = maps:get(Key, PS#ps.elim_blocked, []),
-            PS#ps{elim_blocked = (PS#ps.elim_blocked)#{Key => [Expr | BlockedByKey]}}
-    end.
+    BlockedByKey = maps:get(Key, PS#ps.elim_blocked, []),
+    PS#ps{elim_blocked = (PS#ps.elim_blocked)#{Key => [Expr | BlockedByKey]}}.
 
 
 
