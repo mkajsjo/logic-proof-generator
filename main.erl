@@ -11,22 +11,8 @@
         print_truth_table/1,
         foo/2,
         prove/1,
-        prove_dm/0,
-        construct/2
+        prove_dm/0
     ]
-).
-
-
--record(
-   proof_struct,
-   {
-        given,
-        assumption,
-        sought,
-        dependency_graph,
-        conclusion,
-        queue
-   }
 ).
 
 
@@ -196,109 +182,6 @@ foo(P, {Map, Exprs}) ->
     {Map, Exprs2}.
 
 
-%prove({Premises, '|-', Conclusion}) ->
-%    {DependencyGraph, Sought} =
-%        lists:foldl(
-%            fun foo/2,
-%            {#{}, #{}},
-%            [Conclusion | Premises]
-%        ),
-%    Given =
-%        lists:foldl(
-%            fun deconstruct/2,
-%            maps:from_list([{P, true} || P <- Premises]),
-%            Premises
-%        ),
-%    f(
-%        #proof_struct{
-%            given = Given,
-%            sought = Sought,
-%            dependency_graph = DependencyGraph,
-%            conclusion = Conclusion,
-%            queue = maps:keys(Sought)
-%        }
-%    ).
-
-
-%f(#proof_struct{queue = []}) ->
-%    no_proof_found;
-%f(#proof_struct{conclusion = Conclusion} = PS) ->
-%    [Expr | Queue] = PS#proof_struct.queue,
-%    case construct(Expr, PS#proof_struct.given) of
-%        hehe ->
-%            f(PS#proof_struct{queue = Queue});
-%        Conclusion ->
-%            proof_found;
-%        Expr ->
-%            Queue2 =
-%                Queue ++ maps:get(Expr, PS#proof_struct.dependency_graph, []),
-%            Given =
-%                deconstruct(Expr, maps:put(Expr, true, PS#proof_struct.given)),
-%            f(PS#proof_struct{queue = Queue2, given = Given})
-%    end.
-
-
-construct({A, '&', B} = Expr, Given) ->
-    case Given of
-        #{A := _, B := _} ->
-            Expr;
-        _ ->
-            hehe
-    end;
-construct({A, '|', B} = Expr, Given) ->
-    case Given of
-        #{A := _} ->
-            Expr;
-        #{B := _} ->
-            Expr;
-        _ ->
-            hehe
-    end;
-construct({'!', {'!', A}} = Expr, Given) ->
-    case Given of
-        #{A := _} ->
-            Expr;
-        _ ->
-            hehe
-    end;
-construct(Expr, Given) ->
-    case Given of
-        #{false := _} ->
-            Expr;
-        #{Expr := _} ->
-            Expr;
-        _ ->
-            hehe
-    end.
-
-
-deconstruct(false, Given) ->
-    Given#{false => true};
-deconstruct({A, '&', B}, Given) ->
-    Given2 = Given#{A => true, B => true},
-    Given3 = deconstruct(A, Given2),
-    deconstruct(B, Given3);
-deconstruct({A, '->', B}, Given) ->
-    Given2 = deconstruct_helper(A, B, Given),
-    deconstruct_helper({'!', B}, {'!', A}, Given2);
-deconstruct({'!', {'!', Expr}}, Given) ->
-    Given2 = Given#{Expr => true},
-    deconstruct(Expr, Given2);
-deconstruct({'!', Expr}, Given) ->
-    deconstruct_helper(Expr, false, Given);
-deconstruct(_, Given) ->
-    Given.
-
-
-deconstruct_helper(Key, Value, Given) ->
-    case Given of
-        #{Key := _} ->
-            deconstruct(Value, Given#{Value => true});
-        _ ->
-            Given
-    end.
-
-
 %---
 
 
@@ -338,7 +221,7 @@ prove({Premises, '|-', Conclusion}) ->
     PS =
         lists:foldl(
             fun (Premise, Acc) ->
-                    add_proof(Premise, {premise, [Premise]}, Acc)
+                    add_proof(Premise, {premise, []}, Acc)
             end,
             #ps{
                 proved = #{},
@@ -365,13 +248,16 @@ prove_(PS) ->
         %    maps:keys(PS2#ps.elim_blocked)
         %),
     ProofFound = is_proved(PS3#ps.conclusion, PS3),
+    CounterProofFound = is_proved(negate(PS3#ps.conclusion), PS3),
     BottomFound = is_proved(false, PS3),
     NrProvedAfter = maps:size(PS3#ps.proved),
     if
-        ProofFound ->
-            proof_found;
         BottomFound ->
             proof_found_by_bottom; %TODO just proof_found
+        ProofFound ->
+            {proof_found, reduce_proof_tree(PS3#ps.conclusion, PS3#ps.rules)};
+        CounterProofFound ->
+            counter_proof_found;
         NrProvedAfter =:= NrProvedBefore ->
             PS4 =
                 lists:foldl(
@@ -482,9 +368,23 @@ add_elim_proof(Key, Expr, Rule, PS) ->
     end.
 
 
-add_proof(Expr, Rule, PS) ->
-    %io:fwrite("add_proof: ~nExpr ~p~n Rule~p~n proved ~p~neblocked ~p~n", [Expr, Rule, PS#ps.proved, PS#ps.elim_blocked]), TODO remove
-    PS2 = add_proof_rule(Rule, add_proof_(Expr, PS)),
+add_proof(false, Rule, PS0) ->
+    add_proof_rule(false, Rule, add_proof_(false, PS0));
+add_proof(Expr, Rule, PS0) ->
+    io:fwrite(lists:duplicate(2 * length(previous_assumptions(PS0)), " ") ++ "Expr ~p~n", [Expr]),
+    PS =
+        case Expr of
+            {A, '->', B} ->
+                case is_proved({negate(A), '->', B}, PS0) of
+                    true ->
+                        add_proof({A, '|', negate(A)}, {lem, []}, PS0);
+                    false ->
+                        PS0
+                end;
+            _ ->
+                PS0
+        end,
+    PS2 = add_proof_rule(Expr, Rule, add_proof_(Expr, PS)),
     IntroBlocked = maps:get(Expr, PS2#ps.intro_blocked, []),
     PS3 =
         lists:foldl(
@@ -508,8 +408,21 @@ add_proof_(Expr, PS) ->
     PS#ps{proved_in_assumption = (PS#ps.proved_in_assumption)#{Expr => true}}.
 
 
-add_proof_rule(Rule, PS) ->
-    PS.
+add_proof_rule(Expr, {Rule, [Assumption, Expr2]}, #ps{assumption = A, rules = Rules} = PS) when Rule =:= '!i'; Rule =:= '->i' ->
+    PS#ps{rules = Rules#{{A, Expr} => {Rule, [{Assumption, Assumption}, {Assumption, Expr2}]}}};
+add_proof_rule(Expr, {Rule, Exprs}, #ps{assumption = A, rules = Rules} = PS) ->
+    PS#ps{rules = Rules#{{A, Expr} => {Rule, [resolve_pointer(E, PS) || E <- Exprs]}}}.
+
+
+resolve_pointer(_, undefined) ->
+    {foo, loose_pointer}; %TODO remove
+resolve_pointer(Expr, #ps{assumption = A, parent = P, rules = Rules}) ->
+    case maps:is_key({A, Expr}, Rules) of
+        true ->
+            {A, Expr};
+        false ->
+            resolve_pointer(Expr, P)
+    end.
 
 
 is_proved(Expr, PS) ->
@@ -551,7 +464,7 @@ previous_assumptions(#ps{assumption = Assumption, parent = Parent}) ->
 negate({'!', Expr}) ->
     Expr;
 negate(Expr) ->
-    Expr.
+    {'!', Expr}.
 
 
 is_double_negated({'!', {'!', _}}) ->
@@ -561,22 +474,25 @@ is_double_negated(_) ->
 
 
 start_assumption(Assumption, PS) ->
-    Proved = maps:merge(PS#ps.proved, PS#ps.proved_in_assumption),
-    PS2 =
-        PS#ps{
-            assumption = Assumption,
-            proved = Proved,
-            proved_in_assumption = #{},
-            parent = PS
-        },
-    FOO = %TODO
-        add_proof(Assumption, {assumption, [Assumption]}, PS2),
-    Proved2 = maps:merge(FOO#ps.proved, FOO#ps.proved_in_assumption),
-    io:fwrite("Start Assumption: ~p~nproved: ~p~neblocked: ~p~n~n",
-              [Assumption, Proved2, PS#ps.elim_blocked]),
-    assumption(
-        FOO
-    ).
+    % Assumption could have been proved from previous assumption.
+    case is_proved(Assumption, PS) of
+        true ->
+            PS;
+        false ->
+            io:fwrite(lists:duplicate(2 * length(previous_assumptions(PS)), " ") ++ "START ASSUMPTION: ~p~n", [Assumption]),
+            Proved = maps:merge(PS#ps.proved, PS#ps.proved_in_assumption),
+            PS2 =
+                PS#ps{
+                    assumption = Assumption,
+                    proved = Proved,
+                    proved_in_assumption = #{},
+                    parent = PS,
+                    rules = PS#ps.rules
+                },
+            assumption(
+                add_proof(Assumption, {assumption, []}, PS2)
+            )
+    end.
 
 
 assumption(PS) ->
@@ -617,36 +533,50 @@ assumption(PS) ->
     end.
 
 
-useful_proofs(PS) ->
+useful_to_prove(PS) ->
     A = maps:keys(PS#ps.intro_blocked),
     B = maps:keys(PS#ps.elim_blocked),
     C = lists:merge(maps:values(PS#ps.intro_blocked)),
     D = lists:merge(maps:values(PS#ps.elim_blocked)),
-    A ++ B ++ C ++ D.
+    lists:usort(A ++ B ++ C ++ D).
 
 
-end_assumption(#ps{proved_in_assumption = Proved, assumption = Assumption, parent = Parent} = PS0) ->
-    PS =
-        case is_proved(false, PS0) of
-            true ->
-                add_proof({'!', Assumption}, {'!i', [Assumption, false]}, Parent);
-            false ->
-                Parent
-        end,
-    Q =
-    lists:foldl(
-        fun (N, Acc) ->
-                add_proof({Assumption, '->', N}, {'->i', [Assumption, N]}, Acc)
-        end,
-        PS,
-        [
-            P
-        ||
-            P <- maps:keys(maps:with(useful_proofs(PS), Proved)),
-            not is_double_negated(P)
-        ]
-    ),
-    io:fwrite("End Assumption: ~p: ~p~n", [Assumption, maps:without(maps:keys(maps:merge(Parent#ps.proved,
-                                                                               Parent#ps.proved_in_assumption)), maps:merge(Q#ps.proved,
-                                                                  Q#ps.proved_in_assumption))]), %TODO remove print
-    Q.
+end_assumption(#ps{proved_in_assumption = Proved, assumption = Assumption, parent = Parent, rules = Rules} = PS0) ->
+    io:fwrite(lists:duplicate(2 * length(previous_assumptions(PS0)) - 2, " ") ++ "END ASSUMPTION: ~p~n~n", [Assumption]),
+    case is_proved(false, PS0) of
+        true ->
+            lists:foldl(
+                fun (N, Acc) ->
+                        add_proof({Assumption, '->', N}, {'->i', [Assumption, false]}, Acc)
+                end,
+                add_proof({'!', Assumption}, {'!i', [Assumption, false]}, Parent#ps{rules = Rules}),
+                [
+                    P
+                ||
+                    P <- useful_to_prove(PS0),
+                    not is_double_negated(P)
+                ]
+            );
+        false ->
+            lists:foldl(
+                fun (N, Acc) ->
+                        add_proof({Assumption, '->', N}, {'->i', [Assumption, N]}, Acc)
+                end,
+                Parent#ps{rules = Rules},
+                [
+                    P
+                ||
+                    P <- maps:keys(maps:with(useful_to_prove(PS0), Proved)),
+                    not is_double_negated(P)
+                ]
+            )
+    end.
+
+
+reduce_proof_tree(Conclusion, ProofTree) ->
+    reduce_proof_tree({undefined, Conclusion}, 0, ProofTree, []).
+
+
+reduce_proof_tree({A, Expr}, Counter, ProofTree, Rules) ->
+    {Rule, Exprs} = maps:get({A, Expr}, ProofTree, {bad_key, []}),
+    [{Expr, Rule} | lists:concat([reduce_proof_tree(E, Counter, ProofTree, Rules) || E <- Exprs])].
