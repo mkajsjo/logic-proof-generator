@@ -11,6 +11,7 @@
         print_truth_table/1,
         foo/2,
         prove/1,
+        prove_dm/0,
         construct/2
     ]
 ).
@@ -310,9 +311,15 @@ deconstruct_helper(Key, Value, Given) ->
         elim_blocked = #{},
         intro_blocked = #{},
         conclusion,
-        queue
+        queue,
+        rules = #{},
+        parent
    }
 ).
+
+
+prove_dm() ->
+    prove({[{'!', {p, '&', q}}], '|-', {{'!', p}, '|', {'!', q}}}).
 
 
 prove({Premises, '|-', Conclusion}) ->
@@ -322,19 +329,25 @@ prove({Premises, '|-', Conclusion}) ->
             {#{}, #{}},
             [Conclusion | Premises]
         ),
-    Given =
+    %Given = TODO remove
+    %    lists:foldl(
+    %        fun deconstruct/2,
+    %        maps:from_list([{P, true} || P <- Premises]),
+    %        Premises
+    %    ),
+    PS =
         lists:foldl(
-            fun deconstruct/2,
-            maps:from_list([{P, true} || P <- Premises]),
+            fun (Premise, Acc) ->
+                    add_proof(Premise, {premise, [Premise]}, Acc)
+            end,
+            #ps{
+                proved = #{},
+                conclusion = Conclusion,
+                queue = maps:keys(Sought)
+            },
             Premises
         ),
-    prove_(
-        #ps{
-            proved = Given,
-            conclusion = Conclusion,
-            queue = maps:keys(Sought)
-        }
-    ).
+    prove_(PS).
 
 
 prove_(PS) ->
@@ -345,14 +358,14 @@ prove_(PS) ->
             PS,
             PS#ps.queue
         ),
-    PS3 =
-        lists:foldl(
-            fun intro/2,
-            PS2,
-            maps:keys(PS2#ps.elim_blocked)
-        ),
-    ProofFound = maps:is_key(PS3#ps.conclusion, PS3#ps.proved),
-    BottomFound = maps:is_key(false, PS3#ps.proved),
+    PS3 = PS2,
+        %lists:foldl(
+        %    fun elim/2,
+        %    PS2,
+        %    maps:keys(PS2#ps.elim_blocked)
+        %),
+    ProofFound = is_proved(PS3#ps.conclusion, PS3),
+    BottomFound = is_proved(false, PS3),
     NrProvedAfter = maps:size(PS3#ps.proved),
     if
         ProofFound ->
@@ -369,7 +382,7 @@ prove_(PS) ->
             NrProvedAfter2 = maps:size(PS4#ps.proved),
             case NrProvedAfter2 =:= NrProvedBefore of
                 true ->
-                    no_proof_found;
+                    {no_proof_found, PS4#ps.proved};
                 false ->
                     prove_(PS4#ps{queue = maps:keys(PS3#ps.intro_blocked)})
             end;
@@ -383,7 +396,7 @@ intro({A, '&', B} = Expr, PS) ->
         {_, _, true} ->
             PS;
         {true, true, _} ->
-            add_intro_proof(skip, Expr, PS);
+            add_intro_proof(skip, Expr, {'&i', [A, B]}, PS);
         {false, true, _} ->
             add_intro_blocked(A, Expr, PS);
         {true, false, _} ->
@@ -396,68 +409,82 @@ intro({A, '&', B} = Expr, PS) ->
             )
     end;
 intro({A, '|', B} = Expr, PS) ->
-    PS2 = add_intro_proof(A, Expr, PS),
+    PS2 = add_intro_proof(A, Expr, {'|i1', [A]}, PS),
     add_intro_proof(
         B,
         Expr,
+        {'|i2', [B]},
         PS2
     );
 intro({'!', {'!', A}} = Expr, PS) ->
-    add_intro_proof(A, Expr, PS);
+    add_intro_proof(A, Expr, {'!!i', [Expr]}, PS);
 intro(_, PS) ->
     PS.
 
 
-add_intro_proof(Key, Expr, PS) ->
+add_intro_proof(Key, Expr, Rule, PS) ->
     case {Key =:= skip orelse is_proved(Key, PS), is_proved(Expr, PS)} of
         {_, true} ->
             PS;
         {true, false} ->
-            add_proof(Expr, PS);
+            add_proof(Expr, Rule, PS);
         {false, false} ->
             add_intro_blocked(Key, Expr, PS)
     end.
 
 
-elim(Expr, PS0) ->
-    PS = elim_(Expr, PS0),
-    add_elim_proof({'!', Expr}, false, PS).
+elim(Expr, PS) ->
+    %io:fwrite("ELIM: ~p~n", [Expr]), TODO remove elim_ function
+    elim_(Expr, PS).
 
 
-elim_({A, '&', B}, PS) ->
+elim_({A, '&', B} = Expr, PS) ->
     add_elim_proof(
         skip,
         B,
-        add_elim_proof(skip, A, PS)
+        {'&e2', [Expr]},
+        add_elim_proof(skip, A, {'&e1', [Expr]}, PS)
     );
-elim_({A, '->', B}, PS) ->
-    PS2 = add_elim_proof(A, B, PS),
+elim_({A, '->', B} = Expr, PS) ->
+    PS2 = add_elim_proof(A, B, {'->e', [A, Expr]}, PS),
     add_elim_proof(
         {'!', B},
         {'!', A},
+        {'MT', [{'!', B}, Expr]},
         PS2
     );
-elim_({'!', {'!', A}}, PS) ->
-    add_elim_proof(skip, A, PS);
-elim_({'!', A}, PS) ->
-    add_elim_proof(A, false, PS);
-elim_(_, PS) ->
-    PS.
+elim_({'!', {'!', A}} = Expr, PS) ->
+    add_elim_proof(skip, A, {'!!e', [Expr]}, PS);
+elim_({'!', A} = Expr, PS) ->
+    case is_proved(A, PS) of
+        true ->
+            add_proof(false, {'!e', [A, Expr]}, PS);
+        false ->
+            add_elim_blocked(A, Expr, PS)
+    end;
+elim_(Expr, PS) ->
+    case is_proved({'!', Expr}, PS) of
+        true ->
+            add_proof(false, {'!e', [{'!', Expr}, Expr]}, PS);
+        false ->
+            PS
+    end.
 
 
-add_elim_proof(Key, Expr, PS) ->
+add_elim_proof(Key, Expr, Rule, PS) ->
     case {Key =:= skip orelse is_proved(Key, PS), is_proved(Expr, PS)} of
         {_, true} ->
             PS;
         {true, false} ->
-            add_proof(Expr, PS);
+            add_proof(Expr, Rule, PS);
         {false, false} ->
             add_elim_blocked(Key, Expr, PS)
     end.
 
 
-add_proof(Expr, PS) ->
-    PS2 = add_proof_(Expr, PS),
+add_proof(Expr, Rule, PS) ->
+    %io:fwrite("add_proof: ~nExpr ~p~n Rule~p~n proved ~p~neblocked ~p~n", [Expr, Rule, PS#ps.proved, PS#ps.elim_blocked]), TODO remove
+    PS2 = add_proof_rule(Rule, add_proof_(Expr, PS)),
     IntroBlocked = maps:get(Expr, PS2#ps.intro_blocked, []),
     PS3 =
         lists:foldl(
@@ -481,6 +508,10 @@ add_proof_(Expr, PS) ->
     PS#ps{proved_in_assumption = (PS#ps.proved_in_assumption)#{Expr => true}}.
 
 
+add_proof_rule(Rule, PS) ->
+    PS.
+
+
 is_proved(Expr, PS) ->
     maps:is_key(Expr, PS#ps.proved) orelse
     maps:is_key(Expr, PS#ps.proved_in_assumption).
@@ -497,31 +528,54 @@ add_elim_blocked(Key, Expr, PS) ->
 
 
 assumable(#ps{intro_blocked = IB, elim_blocked = EB, assumption = Ass} = PS) ->
+    PreviousAssumptions = previous_assumptions(PS),
     [
         A
     ||
         A <- maps:keys(maps:merge(IB, EB)),
         not is_proved(A, PS),
         not is_proved({'!', A}, PS),
+        not is_double_negated(A),
+        not lists:member(A, PreviousAssumptions),
+        not lists:member(negate(A), PreviousAssumptions),
         A =/= Ass
     ].
 
 
-start_assumption(Assumption, #ps{assumption = OldAssumption} = PS) ->
+previous_assumptions(#ps{parent = undefined}) ->
+    [];
+previous_assumptions(#ps{assumption = Assumption, parent = Parent}) ->
+    [Assumption | previous_assumptions(Parent)].
+
+
+negate({'!', Expr}) ->
+    Expr;
+negate(Expr) ->
+    Expr.
+
+
+is_double_negated({'!', {'!', _}}) ->
+    true;
+is_double_negated(_) ->
+    false.
+
+
+start_assumption(Assumption, PS) ->
     Proved = maps:merge(PS#ps.proved, PS#ps.proved_in_assumption),
-    Proved2 =
-        case OldAssumption of
-            undefined ->
-                Proved;
-            _ ->
-                maps:put(OldAssumption, true, Proved)
-        end,
-    assumption(
+    PS2 =
         PS#ps{
             assumption = Assumption,
-            proved = Proved2,
-            proved_in_assumption = #{}
-        }
+            proved = Proved,
+            proved_in_assumption = #{},
+            parent = PS
+        },
+    FOO = %TODO
+        add_proof(Assumption, {assumption, [Assumption]}, PS2),
+    Proved2 = maps:merge(FOO#ps.proved, FOO#ps.proved_in_assumption),
+    io:fwrite("Start Assumption: ~p~nproved: ~p~neblocked: ~p~n~n",
+              [Assumption, Proved2, PS#ps.elim_blocked]),
+    assumption(
+        FOO
     ).
 
 
@@ -533,13 +587,13 @@ assumption(PS) ->
             PS,
             PS#ps.queue
         ),
-    PS3 =
-        lists:foldl(
-            fun intro/2,
-            PS2,
-            maps:keys(PS2#ps.elim_blocked)
-        ),
-    BottomFound = maps:is_key(false, PS3#ps.proved),
+    PS3 = PS2,
+        %lists:foldl(
+        %    fun elim/2,
+        %    PS2,
+        %    maps:keys(PS2#ps.elim_blocked)
+        %),
+    BottomFound = is_proved(false, PS3),
     NrProvedAfter = maps:size(PS3#ps.proved),
     if
         BottomFound ->
@@ -563,19 +617,36 @@ assumption(PS) ->
     end.
 
 
-end_assumption(#ps{proved_in_assumption = Proved, assumption = Assumption} = PS0) ->
-    PS = PS0#ps{proved_in_assumption = #{}, assumption = undefined},
-    PS2 =
-        case is_proved(false, PS) of
+useful_proofs(PS) ->
+    A = maps:keys(PS#ps.intro_blocked),
+    B = maps:keys(PS#ps.elim_blocked),
+    C = lists:merge(maps:values(PS#ps.intro_blocked)),
+    D = lists:merge(maps:values(PS#ps.elim_blocked)),
+    A ++ B ++ C ++ D.
+
+
+end_assumption(#ps{proved_in_assumption = Proved, assumption = Assumption, parent = Parent} = PS0) ->
+    PS =
+        case is_proved(false, PS0) of
             true ->
-                add_proof({'!', Assumption}, PS);
+                add_proof({'!', Assumption}, {'!i', [Assumption, false]}, Parent);
             false ->
-                PS
+                Parent
         end,
+    Q =
     lists:foldl(
         fun (N, Acc) ->
-                add_proof({Assumption, '->', N}, Acc)
+                add_proof({Assumption, '->', N}, {'->i', [Assumption, N]}, Acc)
         end,
-        PS2,
-        maps:keys(Proved)
-    ).
+        PS,
+        [
+            P
+        ||
+            P <- maps:keys(maps:with(useful_proofs(PS), Proved)),
+            not is_double_negated(P)
+        ]
+    ),
+    io:fwrite("End Assumption: ~p: ~p~n", [Assumption, maps:without(maps:keys(maps:merge(Parent#ps.proved,
+                                                                               Parent#ps.proved_in_assumption)), maps:merge(Q#ps.proved,
+                                                                  Q#ps.proved_in_assumption))]), %TODO remove print
+    Q.
