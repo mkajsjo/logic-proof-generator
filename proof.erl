@@ -119,30 +119,52 @@ intro(_, PS) ->
 elim(false, PS) ->
     lists:foldl(
         fun (Expr, Acc) ->
-                add_elim_if_proved({'Fe', []}, false, Expr, Acc)
+                add_proof({'Fe', [false]}, Expr, Acc)
         end,
         PS,
         useful_to_prove(PS)
     );
 elim(Expr, PS) ->
-    add_elim_if_proved({'!e', [{'!', Expr}]}, Expr, false, elim_(Expr, PS)).
+    PS2 = elim_(Expr, PS),
+    case is_proved({'!', Expr}, PS2) of
+        true ->
+            add_proof({'!e', [Expr, {'!', Expr}]}, false, PS2);
+        false ->
+            add_elim_blocked({'!', Expr}, Expr, PS2)
+    end.
 
 
 elim_({A, '&', B} = Expr, PS) ->
-    PS2 = add_elim_if_proved({'&e1', []}, Expr, A, PS),
-    add_elim_if_proved({'&e2', []}, Expr, B, PS2);
+    PS2 = add_proof({'&e1', [Expr]}, A, PS),
+    add_proof({'&e2', [Expr]}, B, PS2);
 elim_({A, '->', B} = Expr, PS) ->
-    PS2 = add_elim_if_proved({'->e', [A]}, Expr, B, PS),
-    add_elim_if_proved({'MT', [{'!', B}]}, Expr, {'!', A}, PS2);
+    PS2 =
+        case is_proved(A, PS) of
+            true ->
+                add_proof({'->e', [A, Expr]}, B, PS);
+            false ->
+                add_elim_blocked(A, Expr, PS)
+        end,
+    case is_proved({'!', B}, PS2) of
+        true ->
+            add_proof({'MT', [{'!', B}, Expr]}, {'!', A}, PS2);
+        false ->
+            add_elim_blocked({'!', B}, Expr, PS2)
+    end;
 elim_({'!', {'!', A}} = Expr, PS) ->
-    add_elim_if_proved({'!!e', []}, Expr, A, PS);
+    add_proof({'!!e', [Expr]}, A, PS);
 elim_({'!', A} = Expr, PS) ->
-    add_elim_if_proved({'!e', [A]}, Expr, false, PS);
+    case is_proved(A, PS) of
+        true ->
+            add_proof({'!e', [A, Expr]}, false, PS);
+        false ->
+            add_elim_blocked(A, Expr, PS)
+    end;
 elim_(_, PS) ->
     PS.
 
 
-add_intro_if_proved({Rule, Exprs}, Expr, PS) ->
+add_intro_if_proved({_, Exprs} = Rule, Expr, PS) ->
     Unproved =
         [
             {E, Expr}
@@ -152,30 +174,10 @@ add_intro_if_proved({Rule, Exprs}, Expr, PS) ->
         ],
     case Unproved of
         [] ->
-            add_proof({Rule, Exprs}, Expr, PS);
+            add_proof(Rule, Expr, PS);
         _ ->
             lists:foldl(
                 fun add_intro_blocked/2,
-                PS,
-                Unproved
-            )
-    end.
-
-
-add_elim_if_proved({Rule, Exprs}, ExprToElim, Expr, PS) ->
-    Unproved =
-        [
-            {E, ExprToElim}
-        ||
-            E <- Exprs,
-            not is_proved(E, PS)
-        ],
-    case Unproved of
-        [] ->
-            add_proof({Rule, Exprs}, Expr, PS);
-        _ ->
-            lists:foldl(
-                fun add_elim_blocked/2,
                 PS,
                 Unproved
             )
@@ -187,7 +189,7 @@ add_intro_blocked({Key, Expr}, PS) ->
     PS#ps{intro_blocked = (PS#ps.intro_blocked)#{Key => [Expr | BlockedByKey]}}.
 
 
-add_elim_blocked({Key, Expr}, PS) ->
+add_elim_blocked(Key, Expr, PS) ->
     BlockedByKey = maps:get(Key, PS#ps.elim_blocked, []),
     PS#ps{elim_blocked = (PS#ps.elim_blocked)#{Key => [Expr | BlockedByKey]}}.
 
@@ -197,7 +199,7 @@ is_proved(Expr, PS) ->
     maps:is_key(Expr, PS#ps.proved_in_assumption).
 
 
-add_proof({_Rule, _Exprs}, Expr, PS) ->
+add_proof(_Rule, Expr, PS) ->
     case is_proved(Expr, PS) of
         true ->
             PS;
