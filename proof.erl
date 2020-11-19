@@ -326,10 +326,12 @@ end_assumption(#ps{assumption = A, parent = P, proved_in_assumption = Proved, ne
             rules = Rules
         },
     PS2 =
-        case is_proved(false, PS0) of
-            true ->
+        case {A, is_proved(false, PS0)} of
+            {{'!', NotA}, true} ->
+                add_proof({'PBC', [A, false]}, NotA, PS);
+            {_, true} ->
                 add_proof({'!i', [A, false]}, {'!', A}, PS);
-            false ->
+            _ ->
                 PS
         end,
     NewProofs =
