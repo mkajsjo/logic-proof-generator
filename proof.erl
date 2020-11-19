@@ -4,8 +4,7 @@
 -export(
     [
         find_dm/0,
-        find/1,
-        prove/1 %TODO remove
+        find/1
     ]
 ).
 
@@ -78,7 +77,13 @@ prove(PS) ->
         ProofFound ->
             proof_found;
         NrProvedAfter =:= NrProvedBefore ->
-            start_assumptions(PS2);
+            PS3 = start_assumptions(PS2),
+            case nr_proved(PS3) =:= NrProvedBefore of
+                true ->
+                    no_proof_found;
+                false ->
+                    prove(requeue(PS3))
+            end;
         true ->
             prove(requeue(PS2))
     end.
@@ -111,26 +116,30 @@ intro(_, PS) ->
     PS.
 
 
-elim({A, '&', B} = Expr, PS) ->
-    PS2 = add_elim_if_proved({'&e1', [Expr]}, A, PS),
-    add_elim_if_proved({'&e2', [Expr]}, B, PS2);
-elim({A, '->', B} = Expr, PS) ->
-    PS2 = add_elim_if_proved({'->e', [A, Expr]}, B, PS),
-    add_elim_if_proved({'MT', [{'!', B}, Expr]}, A, PS2);
-elim({'!', {'!', A}} = Expr, PS) ->
-    add_elim_if_proved({'!!e', [Expr]}, A, PS);
-elim({'!', A} = Expr, PS) ->
-    add_elim_if_proved({'!e', [A, Expr]}, false, PS);
 elim(false, PS) ->
     lists:foldl(
         fun (Expr, Acc) ->
-                add_elim_if_proved({'Fe', [false]}, Expr, Acc)
+                add_elim_if_proved({'Fe', []}, false, Expr, Acc)
         end,
         PS,
         useful_to_prove(PS)
     );
 elim(Expr, PS) ->
-    add_elim_if_proved({'!e', [{'!', Expr}, Expr]}, false, PS).
+    add_elim_if_proved({'!e', [{'!', Expr}]}, Expr, false, elim_(Expr, PS)).
+
+
+elim_({A, '&', B} = Expr, PS) ->
+    PS2 = add_elim_if_proved({'&e1', []}, Expr, A, PS),
+    add_elim_if_proved({'&e2', []}, Expr, B, PS2);
+elim_({A, '->', B} = Expr, PS) ->
+    PS2 = add_elim_if_proved({'->e', [A]}, Expr, B, PS),
+    add_elim_if_proved({'MT', [{'!', B}]}, Expr, {'!', A}, PS2);
+elim_({'!', {'!', A}} = Expr, PS) ->
+    add_elim_if_proved({'!!e', []}, Expr, A, PS);
+elim_({'!', A} = Expr, PS) ->
+    add_elim_if_proved({'!e', [A]}, Expr, false, PS);
+elim_(_, PS) ->
+    PS.
 
 
 add_intro_if_proved({Rule, Exprs}, Expr, PS) ->
@@ -143,7 +152,7 @@ add_intro_if_proved({Rule, Exprs}, Expr, PS) ->
         ],
     case Unproved of
         [] ->
-            add_proof(Expr, {Rule, Exprs}, PS);
+            add_proof({Rule, Exprs}, Expr, PS);
         _ ->
             lists:foldl(
                 fun add_intro_blocked/2,
@@ -153,17 +162,17 @@ add_intro_if_proved({Rule, Exprs}, Expr, PS) ->
     end.
 
 
-add_elim_if_proved({Rule, Exprs}, Expr, PS) ->
+add_elim_if_proved({Rule, Exprs}, ExprToElim, Expr, PS) ->
     Unproved =
         [
-            {E, Expr}
+            {E, ExprToElim}
         ||
             E <- Exprs,
             not is_proved(E, PS)
         ],
     case Unproved of
         [] ->
-            add_proof(Expr, {Rule, Exprs}, PS);
+            add_proof({Rule, Exprs}, Expr, PS);
         _ ->
             lists:foldl(
                 fun add_elim_blocked/2,
@@ -188,11 +197,12 @@ is_proved(Expr, PS) ->
     maps:is_key(Expr, PS#ps.proved_in_assumption).
 
 
-add_proof(Expr, {_Rule, _Exprs}, PS) ->
+add_proof({_Rule, _Exprs}, Expr, PS) ->
     case is_proved(Expr, PS) of
         true ->
             PS;
         false ->
+            io:fwrite("Proof: ~p~n", [Expr]), %TODO remove
             PS2 = add_proof_(Expr, PS),
             PS3 = unblock_intro(Expr, PS2),
             PS4 = unblock_elim(Expr, PS3),
@@ -261,10 +271,11 @@ is_double_negated(_) ->
 
 start_assumption(Assumption, PS) ->
     % Assumption could have been proved from previous assumption.
-    case is_proved(Assumption, PS) of
+    case is_proved(Assumption, PS) orelse is_proved(false, PS) of
         true ->
             PS;
         false ->
+            io:fwrite("Assumption: ~p~n", [Assumption]), %TODO remove
             Proved = maps:merge(PS#ps.proved, PS#ps.proved_in_assumption),
             PS2 =
                 PS#ps{
@@ -299,11 +310,12 @@ assumption(PS) ->
     end.
 
 
-end_assumption(#ps{assumption = A, parent = P, proved = Proved} = PS0) ->
+end_assumption(#ps{assumption = A, parent = P, proved_in_assumption = Proved} = PS0) ->
+    io:fwrite("End assumption: ~p~n~n", [A]), %TODO remove
     PS =
         case is_proved(false, PS0) of
             true ->
-                add_proof({'!i', [A, false]}, {'!', A}, P);
+                add_proof({'!i', []}, {'!', A}, P);
             false ->
                 P
         end,
@@ -311,12 +323,11 @@ end_assumption(#ps{assumption = A, parent = P, proved = Proved} = PS0) ->
         [
             N
         ||
-            N <- maps:keys(maps:with(useful_to_prove(P), Proved)),
-            not is_double_negated(N)
+            N <- maps:keys(maps:with(useful_to_prove(P), Proved))
         ],
     lists:foldl(
         fun (N, Acc) ->
-                add_proof({'->i', [A, N]}, {A, '->', N}, Acc)
+                add_proof({'->i', []}, {A, '->', N}, Acc)
         end,
         PS,
         NewProofs
@@ -328,4 +339,10 @@ useful_to_prove(#ps{intro_blocked = IB, elim_blocked = EB}) ->
     B = maps:keys(EB),
     C = lists:merge(maps:values(IB)),
     D = lists:merge(maps:values(EB)),
-    lists:usort(A ++ B ++ C ++ D).
+    [
+        N
+    ||
+        N <- lists:usort(A ++ B ++ C ++ D),
+        not is_double_negated(N),
+        N =/= false
+    ].
