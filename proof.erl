@@ -381,7 +381,8 @@ add_proof_rule({Rule, Exprs}, Expr, #ps{rules = Rules0, next_proof_ref = Ref, pr
 
 build_proof(#ps{conclusion = C, rules = Rules, proof_refs = Refs}) ->
     Ref = maps:get(C, Refs),
-    lists:keysort(1, lists:usort(build_proof(Ref, Rules))).
+    ProofList = lists:keysort(1, lists:usort(build_proof(Ref, Rules))),
+    fix_proof_references(ProofList).
 
 
 build_proof(Ref, Rules) ->
@@ -391,4 +392,20 @@ build_proof(Ref, Rules) ->
     |
         lists:merge([build_proof(R, Rules) || R <- Refs])
     ].
+
+
+fix_proof_references(ProofList) ->
+    fix_proof_references(ProofList, 1, #{}).
+
+
+fix_proof_references([], _, _) ->
+    [];
+fix_proof_references([{Ref, Expr, Rule, Refs} | Ps], Counter, Map0) ->
+    Map = Map0#{Ref => Counter},
+    [
+        {Counter, Expr, Rule, [maps:get(R, Map) || R <- Refs]}
+    |
+        fix_proof_references(Ps, Counter + 1, Map)
+    ].
+
 
