@@ -15,11 +15,14 @@
         proved = #{},
         proved_in_assumption = #{},
         assumption,
+        next_proof_ref = 0,
         elim_blocked = #{},
         intro_blocked = #{},
         conclusion,
         queue,
-        parent
+        parent,
+        rules = #{},
+        proof_refs = #{}
     }
 ).
 
@@ -75,7 +78,7 @@ prove(PS) ->
         BottomFound ->
             proof_found_by_bottom; %TODO just proof_found
         ProofFound ->
-            proof_found;
+            {proof_found, build_proof(PS2)};
         NrProvedAfter =:= NrProvedBefore ->
             PS3 = start_assumptions(PS2),
             case nr_proved(PS3) =:= NrProvedBefore of
@@ -199,13 +202,14 @@ is_proved(Expr, PS) ->
     maps:is_key(Expr, PS#ps.proved_in_assumption).
 
 
-add_proof(_Rule, Expr, PS) ->
-    case is_proved(Expr, PS) of
+add_proof(Rule, Expr, PS0) ->
+    case is_proved(Expr, PS0) of
         true ->
-            PS;
+            PS0;
         false ->
             io:fwrite("Proof: ~p~n", [Expr]), %TODO remove
-            PS2 = add_proof_(Expr, PS),
+            PS = add_proof_(Expr, PS0),
+            PS2 = add_proof_rule(Rule, Expr, PS),
             PS3 = unblock_intro(Expr, PS2),
             PS4 = unblock_elim(Expr, PS3),
             elim(Expr, PS4)
@@ -312,14 +316,21 @@ assumption(PS) ->
     end.
 
 
-end_assumption(#ps{assumption = A, parent = P, proved_in_assumption = Proved} = PS0) ->
+end_assumption(#ps{assumption = A, parent = P, proved_in_assumption = Proved, next_proof_ref = Ref,
+                  rules = Rules, proof_refs = Refs} = PS0) ->
     io:fwrite("End assumption: ~p~n~n", [A]), %TODO remove
     PS =
+        P#ps{
+            next_proof_ref = Ref,
+            proof_refs = Refs,
+            rules = Rules
+        },
+    PS2 =
         case is_proved(false, PS0) of
             true ->
-                add_proof({'!i', []}, {'!', A}, P);
+                add_proof({'!i', [A, false]}, {'!', A}, PS);
             false ->
-                P
+                PS
         end,
     NewProofs =
         [
@@ -329,9 +340,9 @@ end_assumption(#ps{assumption = A, parent = P, proved_in_assumption = Proved} = 
         ],
     lists:foldl(
         fun (N, Acc) ->
-                add_proof({'->i', []}, {A, '->', N}, Acc)
+                add_proof({'->i', [A, N]}, {A, '->', N}, Acc)
         end,
-        PS,
+        PS2,
         NewProofs
     ).
 
@@ -348,3 +359,36 @@ useful_to_prove(#ps{intro_blocked = IB, elim_blocked = EB}) ->
         not is_double_negated(N),
         N =/= false
     ].
+
+
+add_proof_rule({Rule, Exprs}, Expr, #ps{rules = Rules0, next_proof_ref = Ref, proof_refs = Refs0} = PS) ->
+    Rules =
+        Rules0#{
+            Ref =>
+                {
+                    Expr,
+                    Rule,
+                    [maps:get(E, Refs0) || E <- Exprs]
+                }
+        },
+    Refs = Refs0#{Expr => Ref},
+    PS#ps{
+        next_proof_ref = PS#ps.next_proof_ref + 1,
+        rules = Rules,
+        proof_refs = Refs
+    }.
+
+
+build_proof(#ps{conclusion = C, rules = Rules, proof_refs = Refs}) ->
+    Ref = maps:get(C, Refs),
+    lists:keysort(1, lists:usort(build_proof(Ref, Rules))).
+
+
+build_proof(Ref, Rules) ->
+    {Expr, Rule, Refs} = maps:get(Ref, Rules),
+    [
+        {Ref, Expr, Rule, Refs}
+    |
+        lists:merge([build_proof(R, Rules) || R <- Refs])
+    ].
+
