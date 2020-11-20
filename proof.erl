@@ -75,10 +75,8 @@ prove(PS) ->
     ProofFound = is_proved(PS2#ps.conclusion, PS2),
     %TODO counter proof check?
     if
-        BottomFound ->
-            proof_found_by_bottom; %TODO just proof_found
-        ProofFound ->
-            {proof_found, build_proof(PS2)};
+        ProofFound; BottomFound ->
+            build_proof(PS2);
         NrProvedAfter =:= NrProvedBefore ->
             PS3 = start_assumptions(PS2),
             case nr_proved(PS3) =:= NrProvedBefore of
@@ -207,7 +205,7 @@ add_proof(Rule, Expr, PS0) ->
         true ->
             PS0;
         false ->
-            io:fwrite("Proof: ~p~n", [Expr]), %TODO remove
+            %io:fwrite("Proof: ~p~n", [Expr]), %TODO remove
             PS = add_proof_(Expr, PS0),
             PS2 = add_proof_rule(Rule, Expr, PS),
             PS3 = unblock_intro(Expr, PS2),
@@ -281,7 +279,7 @@ start_assumption(Assumption, PS) ->
         true ->
             PS;
         false ->
-            io:fwrite("Assumption: ~p~n", [Assumption]), %TODO remove
+            %io:fwrite("Assumption: ~p~n", [Assumption]), %TODO remove
             Proved = maps:merge(PS#ps.proved, PS#ps.proved_in_assumption),
             PS2 =
                 PS#ps{
@@ -318,7 +316,7 @@ assumption(PS) ->
 
 end_assumption(#ps{assumption = A, parent = P, proved_in_assumption = Proved, next_proof_ref = Ref,
                   rules = Rules, proof_refs = Refs} = PS0) ->
-    io:fwrite("End assumption: ~p~n~n", [A]), %TODO remove
+    %io:fwrite("End assumption: ~p~n~n", [A]), %TODO remove
     PS =
         P#ps{
             next_proof_ref = Ref,
