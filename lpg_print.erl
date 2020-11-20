@@ -8,6 +8,9 @@
     ]
 ).
 
+-define(REFS_LENGTH, 12).
+-define(SPACER_LENGTH, 3).
+
 
 print_proof(Proof) ->
     io:fwrite(proof_to_iolist(Proof)).
@@ -45,11 +48,19 @@ proof_to_iolist(
         <<"   ">>, %TODO other spacer?
         assumption_boxes_vertical(Map, leading),
         string:pad(expr_to_string(Expr), ES, trailing),
-        assumption_boxes_vertical(Map, trailing),
         <<"   ">>, %TODO other spacer?
-        string:pad(atom_to_binary(Rule, utf8), 3, trailing),
-        <<" ">>,
-        format_references(Rule, Refs),
+        string:pad(
+            unicode:characters_to_binary(
+                [
+                    string:pad(atom_to_binary(Rule, utf8), 3, trailing),
+                    <<" ">>,
+                    format_references(Rule, Refs)
+                ]
+            ),
+            ?REFS_LENGTH,
+            trailing
+        ),
+        assumption_boxes_vertical(Map, trailing),
         <<"\n">>
     |
         proof_to_iolist(Ps, Map)
@@ -153,7 +164,7 @@ assumption_box_horizontal(
             MaxBoxes,
             leading
         ),
-        lists:duplicate(ExprsSize + InnerBoxes, <<"-">>),
+        lists:duplicate(ExprsSize + InnerBoxes + ?SPACER_LENGTH + ?REFS_LENGTH, <<"-">>),
         <<"┼"/utf8>>,
         lists:duplicate(OpenBoxes - 1, <<"|">>),
         <<"\n">>
