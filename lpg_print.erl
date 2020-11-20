@@ -9,7 +9,8 @@
 ).
 
 -define(REFS_LENGTH, 12).
--define(SPACER_LENGTH, 3).
+-define(FIRST_SPACER_LENGTH, 2).
+-define(SECOND_SPACER_LENGTH, 3).
 
 
 print_proof(Proof) ->
@@ -24,31 +25,18 @@ proof_to_iolist([], _) ->
     [];
 proof_to_iolist(
     [{Ref, Expr, Rule, Refs} | Ps],
-    #{row_nr_size := RS, exprs_size := ES, open_boxes := OB, inner_boxes := IB} = Map0
+    #{row_nr_size := RS, exprs_size := ES, open_boxes := OB} = Map0
 ) ->
     OpenBoxes = open_or_close_box(Rule, OB),
-    InnerBoxes =
-        case Rule of
-            assumption ->
-                [find_nr_inner_boxes(Ps) | IB];
-            R when R =:= '->i'; R =:= '!i'; R =:= 'PBC' ->
-                tl(IB);
-            _ ->
-                IB
-        end,
-    Map =
-        Map0#{
-            open_boxes => OpenBoxes,
-            inner_boxes => InnerBoxes
-        },
+    Map = Map0#{open_boxes => OpenBoxes},
     [
         close_assumption_box(Rule, Map0),
         open_assumption_box(Rule, Map),
         string:pad(integer_to_binary(Ref), RS, trailing),
-        <<"   ">>, %TODO other spacer?
-        assumption_boxes_vertical(Map, leading),
+        <<"  ">>,
+        assumption_boxes_vertical(Map, trailing),
         string:pad(expr_to_string(Expr), ES, trailing),
-        <<"   ">>, %TODO other spacer?
+        <<"   ">>,
         string:pad(
             unicode:characters_to_binary(
                 [
@@ -60,7 +48,7 @@ proof_to_iolist(
             ?REFS_LENGTH,
             trailing
         ),
-        assumption_boxes_vertical(Map, trailing),
+        assumption_boxes_vertical(Map, leading),
         <<"\n">>
     |
         proof_to_iolist(Ps, Map)
@@ -80,7 +68,7 @@ calc_proof_paddings(Proof) ->
 
 
 calc_proof_paddings([], Acc) ->
-    Acc#{inner_boxes => [0]};
+    Acc;
 calc_proof_paddings([{Ref, Expr, Rule, _} | Ps], Map) ->
     #{
         open_boxes := OpenBoxes0,
@@ -108,31 +96,6 @@ open_or_close_box(_, OpenBoxes) ->
     OpenBoxes.
 
 
-find_nr_inner_boxes(Proofs) ->
-    find_nr_inner_boxes(Proofs, 0, 0).
-
-
-find_nr_inner_boxes([], _, NrInnerBoxes) ->
-    NrInnerBoxes;
-find_nr_inner_boxes(_, -1, NrInnerBoxes) ->
-    io:fwrite("NrInnerBoxes: ~p~n", [NrInnerBoxes]),
-    NrInnerBoxes;
-find_nr_inner_boxes([{_, _, assumption, _} | Ps], Counter, NrInnerBoxes) ->
-    find_nr_inner_boxes(
-        Ps,
-        Counter + 1,
-        max(NrInnerBoxes, Counter + 1)
-    );
-find_nr_inner_boxes([{_, _, Rule, _} | Ps], Counter, NrInnerBoxes) when Rule =:= '->i'; Rule =:= '!i'; Rule =:= 'PBC' ->
-    find_nr_inner_boxes(
-        Ps,
-        Counter - 1,
-        NrInnerBoxes
-    );
-find_nr_inner_boxes([_ | Ps], Counter, NrInnerBoxes) ->
-    find_nr_inner_boxes(Ps, Counter, NrInnerBoxes).
-
-
 open_assumption_box(assumption, Map) ->
     assumption_box_horizontal(Map);
 open_assumption_box(_, _) ->
@@ -149,38 +112,25 @@ assumption_box_horizontal(
     #{
         row_nr_size := RowNrSize,
         exprs_size := ExprsSize,
-        inner_boxes := [InnerBoxes | _],
         open_boxes := OpenBoxes,
         max_boxes := MaxBoxes
     }
 ) ->
     [
-        lists:duplicate(RowNrSize + 3, <<" ">>), %TODO magic number
-        string:pad(
-            unicode:characters_to_binary(
-                lists:duplicate(OpenBoxes - 1, <<"|">>)
-                ++ [<<"┼"/utf8>> | lists:duplicate(InnerBoxes, <<"-">>)]
-            ),
-            MaxBoxes,
-            leading
-        ),
-        lists:duplicate(ExprsSize + InnerBoxes + ?SPACER_LENGTH + ?REFS_LENGTH, <<"-">>),
+        lists:duplicate(RowNrSize + ?FIRST_SPACER_LENGTH, <<" ">>),
+        lists:duplicate(OpenBoxes - 1, <<"|">>),
+        <<"┼"/utf8>>,
+        %lists:duplicate(InnerBoxes, <<"-">>)]
+        lists:duplicate(ExprsSize + 2 * (MaxBoxes - OpenBoxes) + ?SECOND_SPACER_LENGTH + ?REFS_LENGTH, <<"-">>),
         <<"┼"/utf8>>,
         lists:duplicate(OpenBoxes - 1, <<"|">>),
         <<"\n">>
     ].
 
 
-assumption_boxes_vertical(#{open_boxes := O, max_boxes := M, inner_boxes := [I|_]}, PadDirection) ->
-    Foo =
-        case PadDirection of
-            leading ->
-                lists:duplicate(O, <<"|">>) ++ lists:duplicate(I, <<" ">>);
-            trailing ->
-                lists:duplicate(I, <<" ">>) ++ lists:duplicate(O, <<"|">>)
-        end,
+assumption_boxes_vertical(#{open_boxes := O, max_boxes := M}, PadDirection) ->
     string:pad(
-        unicode:characters_to_binary(Foo),
+        unicode:characters_to_binary(lists:duplicate(O, <<"|">>)),
         M,
         PadDirection
     ).
