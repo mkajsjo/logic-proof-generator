@@ -22,7 +22,9 @@
         queue,
         parent,
         rules = #{},
-        proof_refs = #{}
+        proof_refs = #{},
+        implications = #{},
+        disjunctions = #{}
     }
 ).
 
@@ -113,7 +115,7 @@ intro({A, '|', B} = Expr, PS) ->
     add_intro_if_proved({'|i2', [B]}, Expr, PS2);
 intro({'!', {'!', A}} = Expr, PS) ->
     add_intro_if_proved({'!!i', [A]}, Expr, PS);
-intro(_, PS) ->
+intro(_, PS) -> %TODO remove, should not be needed
     PS.
 
 
@@ -138,6 +140,22 @@ elim(Expr, PS) ->
 elim_({A, '&', B} = Expr, PS) ->
     PS2 = add_proof({'&e1', [Expr]}, A, PS),
     add_proof({'&e2', [Expr]}, B, PS2);
+elim_({A, '|', B} = Expr, PS) ->
+    X = maps:get(A, PS#ps.disjunctions, []),
+    Y = maps:get(B, PS#ps.disjunctions, []),
+    PS2 = PS#ps{disjunctions = (PS#ps.disjunctions)#{A => [Expr | X], B => [Expr | Y]}},
+    lists:foldl(
+        fun (N, Acc) ->
+                add_proof({'|e', [Expr, {A, '->', N}, {B, '->', N}]}, N, Acc)
+        end,
+        PS2,
+        ordsets:to_list(
+            ordsets:intersection(
+                maps:get(A, PS2#ps.implications, ordsets:new()),
+                maps:get(B, PS2#ps.implications, ordsets:new())
+            )
+        )
+    );
 elim_({A, '->', B} = Expr, PS) ->
     PS2 =
         case is_proved(A, PS) of
@@ -200,17 +218,24 @@ is_proved(Expr, PS) ->
     maps:is_key(Expr, PS#ps.proved_in_assumption).
 
 
-add_proof(Rule, Expr, PS0) ->
-    case is_proved(Expr, PS0) of
+add_proof(Rule, Expr, PS) ->
+    case is_proved(Expr, PS) of
         true ->
-            PS0;
+            PS;
         false ->
             %io:fwrite("Proof: ~p~n", [Expr]), %TODO remove
-            PS = add_proof_(Expr, PS0),
-            PS2 = add_proof_rule(Rule, Expr, PS),
-            PS3 = unblock_intro(Expr, PS2),
-            PS4 = unblock_elim(Expr, PS3),
-            elim(Expr, PS4)
+            PS2 =
+                case Expr of
+                    {A, '->', _} ->
+                        add_proof({'LEM', []}, {A, '|', negate(A)}, PS);
+                    _ ->
+                        PS
+                end,
+            PS3 = add_proof_(Expr, PS2),
+            PS4 = add_proof_rule(Rule, Expr, PS3),
+            PS5 = unblock_intro(Expr, PS4),
+            PS6 = unblock_elim(Expr, PS5),
+            elim(Expr, PS6)
     end.
 
 
@@ -223,17 +248,53 @@ unblock_intro(Expr, PS) ->
 
 
 unblock_elim(Expr, PS) ->
+    PS2 =
+        case Expr of
+            {A, '->', _} ->
+                lists:foldl(
+                    fun elim/2,
+                    PS#ps{elim_blocked = maps:remove(Expr, PS#ps.elim_blocked)},
+                    maps:get(A, PS#ps.disjunctions, [])
+                );
+            _ ->
+                PS
+        end,
     lists:foldl(
         fun elim/2,
-        PS#ps{elim_blocked = maps:remove(Expr, PS#ps.elim_blocked)},
-        maps:get(Expr, PS#ps.elim_blocked, [])
+        PS2#ps{elim_blocked = maps:remove(Expr, PS2#ps.elim_blocked)},
+        maps:get(Expr, PS2#ps.elim_blocked, [])
     ).
 
 
-add_proof_(Expr, #ps{assumption = undefined} = PS) ->
-    PS#ps{proved = (PS#ps.proved)#{Expr => true}};
-add_proof_(Expr, PS) ->
-    PS#ps{proved_in_assumption = (PS#ps.proved_in_assumption)#{Expr => true}}.
+add_proof_(
+    Expr,
+    #ps{
+        assumption = A,
+        proved = Proved,
+        proved_in_assumption = Proved2,
+        implications = Impl0
+    } = PS
+) ->
+    Impl =
+        case Expr of
+            {P, '->', Q} ->
+                Implied = maps:get(P, Impl0, ordsets:new()),
+                Impl0#{P => ordsets:add_element(Q, Implied)};
+            _ ->
+                Impl0
+        end,
+    case A of
+        undefined ->
+            PS#ps{
+                proved = Proved#{Expr => true},
+                implications = Impl
+            };
+        _ ->
+            PS#ps{
+                proved_in_assumption = Proved2#{Expr => true},
+                implications = Impl
+            }
+    end.
 
 
 start_assumptions(#ps{intro_blocked = IB, elim_blocked = EB} = PS) ->
@@ -361,7 +422,14 @@ useful_to_prove(#ps{intro_blocked = IB, elim_blocked = EB}) ->
     ].
 
 
-add_proof_rule({Rule, Exprs}, Expr, #ps{rules = Rules0, next_proof_ref = Ref, proof_refs = Refs0} = PS) ->
+add_proof_rule({Rule, Exprs}, Expr, #ps{rules = Rules0, next_proof_ref = Ref0, proof_refs = Refs0} = PS) ->
+    Ref =
+        case {Rule, Expr} of % Hack to insert LEM before all implications.
+            {'LEM', {A, '|', _}} ->
+                maps:get(A, Refs0, Ref0) - 1;
+            _ ->
+                Ref0
+        end,
     Rules =
         Rules0#{
             Ref =>
@@ -373,7 +441,7 @@ add_proof_rule({Rule, Exprs}, Expr, #ps{rules = Rules0, next_proof_ref = Ref, pr
         },
     Refs = Refs0#{Expr => Ref},
     PS#ps{
-        next_proof_ref = PS#ps.next_proof_ref + 1,
+        next_proof_ref = PS#ps.next_proof_ref + 2,
         rules = Rules,
         proof_refs = Refs
     }.
