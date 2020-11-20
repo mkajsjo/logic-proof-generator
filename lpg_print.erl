@@ -35,6 +35,7 @@ proof_to_iolist(
         string:pad(integer_to_binary(Ref), RS, trailing),
         <<"  ">>,
         assumption_boxes_vertical(Map, trailing),
+        <<" ">>,
         string:pad(expr_to_string(Expr), ES, trailing),
         <<"   ">>,
         string:pad(
@@ -116,12 +117,17 @@ assumption_box_horizontal(
         max_boxes := MaxBoxes
     }
 ) ->
+    VerticalSpacerLength
+        = ExprsSize
+        + 2 * (MaxBoxes - OpenBoxes)
+        + ?SECOND_SPACER_LENGTH
+        + ?REFS_LENGTH
+        + 1,
     [
         lists:duplicate(RowNrSize + ?FIRST_SPACER_LENGTH, <<" ">>),
         lists:duplicate(OpenBoxes - 1, <<"|">>),
         <<"┼"/utf8>>,
-        %lists:duplicate(InnerBoxes, <<"-">>)]
-        lists:duplicate(ExprsSize + 2 * (MaxBoxes - OpenBoxes) + ?SECOND_SPACER_LENGTH + ?REFS_LENGTH, <<"-">>),
+        lists:duplicate(VerticalSpacerLength, <<"-">>),
         <<"┼"/utf8>>,
         lists:duplicate(OpenBoxes - 1, <<"|">>),
         <<"\n">>
