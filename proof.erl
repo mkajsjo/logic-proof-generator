@@ -4,6 +4,7 @@
 -export(
     [
         find_dm/0,
+        find_q1/0,
         find/1
     ]
 ).
@@ -16,8 +17,8 @@
         proved_in_assumption = #{},
         assumption,
         next_proof_ref = 0,
-        elim_blocked = #{},
-        intro_blocked = #{},
+        elim_blocked = #{}, %TODO ordsets
+        intro_blocked = #{}, %TODO ordsets
         conclusion,
         queue,
         parent,
@@ -31,6 +32,10 @@
 
 find_dm() ->
     find({[{'!', {p, '&', q}}], '|-', {{'!', p}, '|', {'!', q}}}).
+
+
+find_q1() ->
+    find({[{r, '->', {p, '|', q}}, {'!', {r, '&', q}}], '|-', {r, '->', p}}).
 
 
 find({Premises, '|-', Conclusion}) ->
@@ -115,7 +120,7 @@ intro({A, '|', B} = Expr, PS) ->
     add_intro_if_proved({'|i2', [B]}, Expr, PS2);
 intro({'!', {'!', A}} = Expr, PS) ->
     add_intro_if_proved({'!!i', [A]}, Expr, PS);
-intro(_, PS) -> %TODO remove, should not be needed
+intro(_, PS) ->
     PS.
 
 
@@ -141,9 +146,15 @@ elim_({A, '&', B} = Expr, PS) ->
     PS2 = add_proof({'&e1', [Expr]}, A, PS),
     add_proof({'&e2', [Expr]}, B, PS2);
 elim_({A, '|', B} = Expr, PS) ->
-    X = maps:get(A, PS#ps.disjunctions, []),
-    Y = maps:get(B, PS#ps.disjunctions, []),
-    PS2 = PS#ps{disjunctions = (PS#ps.disjunctions)#{A => [Expr | X], B => [Expr | Y]}},
+    DisjunctionsWithB = maps:get(A, PS#ps.disjunctions, ordsets:new()),
+    DisjunctionsWithA = maps:get(B, PS#ps.disjunctions, ordsets:new()),
+    PS2 =
+        PS#ps{
+            disjunctions = (PS#ps.disjunctions)#{
+                A => ordsets:add_element(Expr, DisjunctionsWithB),
+                B => ordsets:add_element(Expr, DisjunctionsWithA)
+            }
+        },
     lists:foldl(
         fun (N, Acc) ->
                 add_proof({'|e', [Expr, {A, '->', N}, {B, '->', N}]}, N, Acc)
@@ -223,7 +234,7 @@ add_proof(Rule, Expr, PS) ->
         true ->
             PS;
         false ->
-            %io:fwrite("Proof: ~p~n", [Expr]), %TODO remove
+            io:fwrite("Proof: ~p~n", [Expr]), %TODO remove
             PS2 =
                 case Expr of
                     {A, '->', _} ->
@@ -254,7 +265,7 @@ unblock_elim(Expr, PS) ->
                 lists:foldl(
                     fun elim/2,
                     PS#ps{elim_blocked = maps:remove(Expr, PS#ps.elim_blocked)},
-                    maps:get(A, PS#ps.disjunctions, [])
+                    ordsets:to_list(maps:get(A, PS#ps.disjunctions, ordsets:new()))
                 );
             _ ->
                 PS
@@ -334,13 +345,19 @@ is_double_negated(_) ->
     false.
 
 
+is_implication({_, '->', _}) ->
+    true;
+is_implication(_) ->
+    false.
+
+
 start_assumption(Assumption, PS) ->
     % Assumption could have been proved from previous assumption.
     case is_proved(Assumption, PS) orelse is_proved(false, PS) of
         true ->
             PS;
         false ->
-            %io:fwrite("Assumption: ~p~n", [Assumption]), %TODO remove
+            io:fwrite("Assumption: ~p~n", [Assumption]), %TODO remove
             Proved = maps:merge(PS#ps.proved, PS#ps.proved_in_assumption),
             PS2 =
                 PS#ps{
@@ -377,7 +394,7 @@ assumption(PS) ->
 
 end_assumption(#ps{assumption = A, parent = P, proved_in_assumption = Proved, next_proof_ref = Ref,
                   rules = Rules, proof_refs = Refs} = PS0) ->
-    %io:fwrite("End assumption: ~p~n~n", [A]), %TODO remove
+    io:fwrite("End assumption: ~p~n~n", [A]), %TODO remove
     PS =
         P#ps{
             next_proof_ref = Ref,
@@ -408,16 +425,18 @@ end_assumption(#ps{assumption = A, parent = P, proved_in_assumption = Proved, ne
     ).
 
 
-useful_to_prove(#ps{intro_blocked = IB, elim_blocked = EB}) ->
+useful_to_prove(#ps{intro_blocked = IB, elim_blocked = EB, disjunctions = DJ}) ->
     A = maps:keys(IB),
     B = maps:keys(EB),
     C = lists:merge(maps:values(IB)),
     D = lists:merge(maps:values(EB)),
+    E = maps:keys(DJ),
     [
         N
     ||
-        N <- lists:usort(A ++ B ++ C ++ D),
+        N <- lists:usort(A ++ B ++ C ++ D ++ E),
         not is_double_negated(N),
+        not is_implication(N),
         N =/= false
     ].
 
