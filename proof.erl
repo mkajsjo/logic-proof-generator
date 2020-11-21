@@ -4,6 +4,7 @@
 -export(
     [
         find_dm/0,
+        find_dm2/0,
         find_q1/0,
         find/1
     ]
@@ -32,6 +33,10 @@
 
 find_dm() ->
     find({[{'!', {p, '&', q}}], '|-', {{'!', p}, '|', {'!', q}}}).
+
+
+find_dm2() ->
+    find({[{{'!', p}, '|', {'!', q}}], '|-', {'!', {p, '&', q}}}).
 
 
 find_q1() ->
@@ -307,23 +312,35 @@ add_proof_(
     end.
 
 
-start_assumptions(#ps{intro_blocked = IB, elim_blocked = EB} = PS) ->
-    PreviousAssumptions = previous_assumptions(PS),
+start_assumptions(#ps{intro_blocked = IB, elim_blocked = EB, conclusion = C} = PS) ->
     NewAssumptions =
         [
             A
         ||
-            A <- maps:keys(maps:merge(IB, EB)),
-            not is_proved(negate(A), PS),
-            not is_double_negated(A),
-            not lists:member(A, PreviousAssumptions),
-            not lists:member(negate(A), PreviousAssumptions)
+            A <- maps:keys(maps:merge(IB, EB)) ++ [negate(C)],
+            allowed_assumption(A, PS)
         ],
     lists:foldl(
         fun start_assumption/2,
         PS,
         NewAssumptions
     ).
+
+
+allowed_assumption(Expr, PS) ->
+    PreviousAssumptions = previous_assumptions(PS),
+    Banned =
+        case Expr of
+            {A, '&', B} ->
+                is_proved(A, PS) orelse is_proved(B, PS);
+            _ ->
+                false
+        end,
+    not Banned
+    andalso not is_proved(negate(Expr), PS)
+    andalso not is_double_negated(Expr)
+    andalso not lists:member(Expr, PreviousAssumptions)
+    andalso not lists:member(negate(Expr), PreviousAssumptions).
 
 
 previous_assumptions(#ps{parent = undefined}) ->
@@ -417,11 +434,24 @@ end_assumption(#ps{assumption = A, parent = P, proved_in_assumption = Proved, ne
         ],
     lists:foldl(
         fun (N, Acc) ->
-                add_proof({'->i', [A, N]}, {A, '->', N}, Acc)
+            case allowed_implication({A, '->', N}) of
+                true ->
+                    add_proof({'->i', [A, N]}, {A, '->', N}, Acc);
+                false ->
+                    Acc
+            end
         end,
         PS2,
         NewProofs
     ).
+
+
+allowed_implication({{A, '&', _}, '->', A}) ->
+    false;
+allowed_implication({{_, '&', A}, '->', A}) ->
+    false;
+allowed_implication(_) ->
+    true.
 
 
 useful_to_prove(#ps{intro_blocked = IB, elim_blocked = EB, disjunctions = DJ}) ->
@@ -460,7 +490,7 @@ add_proof_rule({'|e', [Dj, ImplA, ImplB]}, Expr, PS) ->
     add_rule(
         PS3#ps.next_proof_ref,
         {Expr, '|e', [DjRef, get_ref(ImplA, PS3), get_ref(ImplB, PS3)]},
-        PS3
+        PS3#ps{proof_refs = PS#ps.proof_refs}
     );
 add_proof_rule({Rule, Exprs}, Expr, PS) ->
     Ref =
