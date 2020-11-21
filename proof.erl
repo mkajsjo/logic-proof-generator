@@ -78,11 +78,10 @@ prove(PS) ->
     NrProvedBefore = nr_proved(PS),
     PS2 = process_queue(PS),
     NrProvedAfter = nr_proved(PS2),
-    BottomFound = is_proved(false, PS2),
     ProofFound = is_proved(PS2#ps.conclusion, PS2),
     %TODO counter proof check?
     if
-        ProofFound; BottomFound ->
+        ProofFound ->
             build_proof(PS2);
         NrProvedAfter =:= NrProvedBefore ->
             PS3 = start_assumptions(PS2),
@@ -234,7 +233,7 @@ add_proof(Rule, Expr, PS) ->
         true ->
             PS;
         false ->
-            io:fwrite("Proof: ~p~n", [Expr]), %TODO remove
+            %io:fwrite("Proof: ~p~n", [Expr]), %TODO remove
             PS2 =
                 case Expr of
                     {A, '->', _} ->
@@ -357,7 +356,7 @@ start_assumption(Assumption, PS) ->
         true ->
             PS;
         false ->
-            io:fwrite("Assumption: ~p~n", [Assumption]), %TODO remove
+            %io:fwrite("Assumption: ~p~n", [Assumption]), %TODO remove
             Proved = maps:merge(PS#ps.proved, PS#ps.proved_in_assumption),
             PS2 =
                 PS#ps{
@@ -394,7 +393,7 @@ assumption(PS) ->
 
 end_assumption(#ps{assumption = A, parent = P, proved_in_assumption = Proved, next_proof_ref = Ref,
                   rules = Rules, proof_refs = Refs} = PS0) ->
-    io:fwrite("End assumption: ~p~n~n", [A]), %TODO remove
+    %io:fwrite("End assumption: ~p~n~n", [A]), %TODO remove
     PS =
         P#ps{
             next_proof_ref = Ref,
@@ -441,29 +440,93 @@ useful_to_prove(#ps{intro_blocked = IB, elim_blocked = EB, disjunctions = DJ}) -
     ].
 
 
-add_proof_rule({Rule, Exprs}, Expr, #ps{rules = Rules0, next_proof_ref = Ref0, proof_refs = Refs0} = PS) ->
+add_proof_rule({'|e', [Dj, ImplA, ImplB]}, Expr, PS) ->
+    %^^^ Hack to move implications from assumptions to the correct place.
+    DjRef = get_ref(Dj, PS),
+    PS2 =
+        case get_rule(ImplA, PS) of
+            {_, '->i', [A, _]} when A < DjRef ->
+                move_assumption(A, get_ref(ImplA, PS), PS);
+            _ ->
+                PS
+        end,
+    PS3 =
+        case get_rule(ImplB, PS) of
+            {_, '->i', [B, _]} when B < DjRef ->
+                move_assumption(B, get_ref(ImplB, PS2), PS2);
+            _ ->
+                PS2
+        end,
+    add_rule(
+        PS3#ps.next_proof_ref,
+        {Expr, '|e', [DjRef, get_ref(ImplA, PS3), get_ref(ImplB, PS3)]},
+        PS3
+    );
+add_proof_rule({Rule, Exprs}, Expr, PS) ->
     Ref =
         case {Rule, Expr} of % Hack to insert LEM before all implications.
             {'LEM', {A, '|', _}} ->
-                maps:get(A, Refs0, Ref0) - 1;
+                get_ref(A, PS, PS#ps.next_proof_ref) - 1;
             _ ->
-                Ref0
+                PS#ps.next_proof_ref
         end,
-    Rules =
-        Rules0#{
-            Ref =>
-                {
-                    Expr,
-                    Rule,
-                    [maps:get(E, Refs0) || E <- Exprs]
-                }
+    add_rule(
+        Ref,
+        {
+            Expr,
+            Rule,
+            [get_ref(E, PS) || E <- Exprs]
         },
-    Refs = Refs0#{Expr => Ref},
+        PS
+    ).
+
+
+move_assumption(A, B, PS) when A > B ->
+    PS;
+move_assumption(A, B, PS) ->
+    {Expr, Rule, Refs} = get_rule(B, PS),
+    PS2 =
+        lists:foldl(
+            fun (R, Acc) ->
+                    move_assumption(A, R, Acc)
+            end,
+            PS,
+            Refs
+        ),
+    Exprs =
+        [
+            element(1, get_rule(R, PS))
+        ||
+            R <- Refs
+        ],
+    add_proof_rule({Rule, Exprs}, Expr, PS2).
+
+
+add_rule(
+    Ref,
+    {Expr, _, _} = Rule,
+    #ps{next_proof_ref = NextRef, rules = Rules, proof_refs = Refs} = PS
+) ->
     PS#ps{
-        next_proof_ref = PS#ps.next_proof_ref + 2,
-        rules = Rules,
-        proof_refs = Refs
+        next_proof_ref = NextRef + 2,
+        rules = Rules#{Ref => Rule},
+        proof_refs = Refs#{Expr => Ref}
     }.
+
+
+get_ref(Expr, #ps{proof_refs = Refs}) ->
+    maps:get(Expr, Refs).
+
+
+get_ref(Expr, #ps{proof_refs = Refs}, Default) ->
+    maps:get(Expr, Refs, Default).
+
+
+get_rule(Ref, #ps{rules = Rules}) when is_integer(Ref) ->
+    maps:get(Ref, Rules);
+get_rule(Expr, #ps{rules = Rules, proof_refs = Refs}) ->
+    Ref = maps:get(Expr, Refs),
+    maps:get(Ref, Rules).
 
 
 build_proof(#ps{conclusion = C, rules = Rules, proof_refs = Refs}) ->
