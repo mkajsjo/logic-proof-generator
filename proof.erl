@@ -21,7 +21,6 @@
         elim_blocked = #{}, %TODO ordsets
         intro_blocked = #{}, %TODO ordsets
         conclusion,
-        queue,
         parent,
         rules = #{},
         proof_refs = #{},
@@ -44,12 +43,8 @@ find_q1() ->
 
 
 find({Premises, '|-', Conclusion}) ->
-    Queue = sub_exprs([Conclusion | Premises]),
-    PS =
-        #ps{
-            conclusion = Conclusion,
-            queue = Queue
-        },
+    SubExprs = sub_exprs([Conclusion | Premises]),
+    PS = #ps{conclusion = Conclusion},
     PS2 =
         lists:foldl(
             fun (P, Acc) ->
@@ -58,7 +53,13 @@ find({Premises, '|-', Conclusion}) ->
             PS,
             Premises
         ),
-    prove(PS2).
+    PS3 =
+        lists:foldl(
+            fun intro/2,
+            PS2,
+            SubExprs
+        ),
+    prove(PS3).
 
 
 sub_exprs(Exprs) ->
@@ -80,41 +81,23 @@ sub_exprs(P, Exprs) ->
 
 
 prove(PS) ->
-    NrProvedBefore = nr_proved(PS),
-    PS2 = process_queue(PS),
-    NrProvedAfter = nr_proved(PS2),
-    ProofFound = is_proved(PS2#ps.conclusion, PS2),
     %TODO counter proof check?
-    if
-        ProofFound ->
-            build_proof(PS2);
-        NrProvedAfter =:= NrProvedBefore ->
-            PS3 = start_assumptions(PS2),
-            case nr_proved(PS3) =:= NrProvedBefore of
+    case is_proved(PS#ps.conclusion, PS) of
+        true ->
+            build_proof(PS);
+        false ->
+            PS2 = start_assumptions(PS),
+            case nr_proved(PS2) =:= nr_proved(PS) of
                 true ->
                     no_proof_found;
                 false ->
-                    prove(requeue(PS3))
-            end;
-        true ->
-            prove(requeue(PS2))
+                    prove(PS2)
+            end
     end.
 
 
 nr_proved(PS) ->
     maps:size(PS#ps.proved).
-
-
-requeue(PS) ->
-    PS#ps{queue = maps:keys(PS#ps.intro_blocked)}.
-
-
-process_queue(PS) ->
-    lists:foldl(
-        fun intro/2,
-        PS,
-        PS#ps.queue
-    ).
 
 
 intro({A, '&', B} = Expr, PS) ->
@@ -388,23 +371,17 @@ start_assumption(Assumption, PS) ->
 
 
 assumption(PS) ->
-    NrProvedBefore = nr_proved(PS),
-    PS2 = process_queue(PS),
-    NrProvedAfter = nr_proved(PS2),
-    BottomFound = is_proved(false, PS2),
-    if
-        BottomFound ->
-            end_assumption(PS2);
-        NrProvedAfter =:= NrProvedBefore ->
-            PS3 = start_assumptions(PS2),
-            case nr_proved(PS3) =:= NrProvedBefore of
-                true ->
-                    end_assumption(PS3);
-                false ->
-                    assumption(requeue(PS3))
-            end;
+    case is_proved(false, PS) of
         true ->
-            assumption(requeue(PS2))
+            end_assumption(PS);
+        false ->
+            PS2 = start_assumptions(PS),
+            case nr_proved(PS2) =:= nr_proved(PS) of
+                true ->
+                    end_assumption(PS2);
+                false ->
+                    assumption(PS2)
+            end
     end.
 
 
