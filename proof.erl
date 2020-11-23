@@ -18,8 +18,7 @@
         proved_in_assumption = #{},
         assumption,
         next_proof_ref = 0,
-        elim_blocked = #{}, %TODO ordsets
-        intro_blocked = #{}, %TODO ordsets
+        blocked = #{},
         conclusion,
         parent,
         rules = #{},
@@ -121,11 +120,12 @@ elim(false, PS) ->
     );
 elim(Expr, PS) ->
     PS2 = elim_(Expr, PS),
+    Rule = {'!e', [Expr, {'!', Expr}]},
     case is_proved({'!', Expr}, PS2) of
         true ->
-            add_proof({'!e', [Expr, {'!', Expr}]}, false, PS2);
+            add_proof(Rule, false, PS2);
         false ->
-            add_elim_blocked({'!', Expr}, Expr, PS2)
+            block({'!', Expr}, Rule, false, PS2)
     end.
 
 
@@ -155,27 +155,30 @@ elim_({A, '|', B} = Expr, PS) ->
         )
     );
 elim_({A, '->', B} = Expr, PS) ->
+    ImplElim = {'->e', [A, Expr]},
+    MT = {'MT', [{'!', B}, Expr]},
     PS2 =
         case is_proved(A, PS) of
             true ->
-                add_proof({'->e', [A, Expr]}, B, PS);
+                add_proof(ImplElim, B, PS);
             false ->
-                add_elim_blocked(A, Expr, PS)
+                block(A, ImplElim, B, PS)
         end,
     case is_proved({'!', B}, PS2) of
         true ->
-            add_proof({'MT', [{'!', B}, Expr]}, {'!', A}, PS2);
+            add_proof(MT, {'!', A}, PS2);
         false ->
-            add_elim_blocked({'!', B}, Expr, PS2)
+            block({'!', B}, MT, {'!', A}, PS2)
     end;
 elim_({'!', {'!', A}} = Expr, PS) ->
     add_proof({'!!e', [Expr]}, A, PS);
 elim_({'!', A} = Expr, PS) ->
+    Rule = {'!e', [A, Expr]},
     case is_proved(A, PS) of
         true ->
-            add_proof({'!e', [A, Expr]}, false, PS);
+            add_proof(Rule, false, PS);
         false ->
-            add_elim_blocked(A, Expr, PS)
+            block(A, Rule, false, PS)
     end;
 elim_(_, PS) ->
     PS.
@@ -184,7 +187,7 @@ elim_(_, PS) ->
 add_intro_if_proved({_, Exprs} = Rule, Expr, PS) ->
     Unproved =
         [
-            {E, Expr}
+            E
         ||
             E <- Exprs,
             not is_proved(E, PS)
@@ -194,21 +197,23 @@ add_intro_if_proved({_, Exprs} = Rule, Expr, PS) ->
             add_proof(Rule, Expr, PS);
         _ ->
             lists:foldl(
-                fun add_intro_blocked/2,
+                fun(U, Acc) ->
+                        block(U, Rule, Expr, [B || B <- Unproved, B =/= U], Acc)
+                end,
                 PS,
                 Unproved
             )
     end.
 
 
-add_intro_blocked({Key, Expr}, PS) ->
-    BlockedByKey = maps:get(Key, PS#ps.intro_blocked, []),
-    PS#ps{intro_blocked = (PS#ps.intro_blocked)#{Key => [Expr | BlockedByKey]}}.
+block(Blocker, Rule, Expr, PS) ->
+    block(Blocker, Rule, Expr, [], PS).
 
 
-add_elim_blocked(Key, Expr, PS) ->
-    BlockedByKey = maps:get(Key, PS#ps.elim_blocked, []),
-    PS#ps{elim_blocked = (PS#ps.elim_blocked)#{Key => [Expr | BlockedByKey]}}.
+block(Blocker, Rule, Expr, ExtraBlockers, PS) ->
+    Blocked = maps:get(Blocker, PS#ps.blocked, []),
+    Entry = {Rule, Expr, ExtraBlockers},
+    PS#ps{blocked = (PS#ps.blocked)#{Blocker => [Entry | Blocked]}}.
 
 
 is_proved(Expr, PS) ->
@@ -231,36 +236,35 @@ add_proof(Rule, Expr, PS) ->
                 end,
             PS3 = add_proof_(Expr, PS2),
             PS4 = add_proof_rule(Rule, Expr, PS3),
-            PS5 = unblock_intro(Expr, PS4),
-            PS6 = unblock_elim(Expr, PS5),
-            elim(Expr, PS6)
+            PS5 = unblock(Expr, PS4),
+            elim(Expr, PS5)
     end.
 
 
-unblock_intro(Expr, PS) ->
-    lists:foldl(
-        fun intro/2,
-        PS#ps{intro_blocked = maps:remove(Expr, PS#ps.intro_blocked)},
-        maps:get(Expr, PS#ps.intro_blocked, [])
-    ).
-
-
-unblock_elim(Expr, PS) ->
-    PS2 =
-        case Expr of
+unblock(Key, #ps{blocked = Blocked} = PS) ->
+    PS2 = PS#ps{blocked = maps:remove(Key, Blocked)},
+    PS3 =
+        case Key of
             {A, '->', _} ->
                 lists:foldl(
                     fun elim/2,
-                    PS#ps{elim_blocked = maps:remove(Expr, PS#ps.elim_blocked)},
+                    PS2,
                     ordsets:to_list(maps:get(A, PS#ps.disjunctions, ordsets:new()))
                 );
             _ ->
-                PS
+                PS2
         end,
     lists:foldl(
-        fun elim/2,
-        PS2#ps{elim_blocked = maps:remove(Expr, PS2#ps.elim_blocked)},
-        maps:get(Expr, PS2#ps.elim_blocked, [])
+        fun ({Rule, Expr, Blockers}, Acc) ->
+            case lists:all(fun(B) -> is_proved(B, Acc) end, Blockers) of
+                true ->
+                    add_proof(Rule, Expr, Acc);
+                false ->
+                    Acc
+            end
+        end,
+        PS3,
+        maps:get(Key, Blocked, [])
     ).
 
 
@@ -295,12 +299,12 @@ add_proof_(
     end.
 
 
-start_assumptions(#ps{intro_blocked = IB, elim_blocked = EB, conclusion = C} = PS) ->
+start_assumptions(#ps{blocked = B, conclusion = C} = PS) ->
     NewAssumptions =
         [
             A
         ||
-            A <- maps:keys(maps:merge(IB, EB)) ++ [negate(C)],
+            A <- maps:keys(B) ++ [negate(C)],
             allowed_assumption(A, PS)
         ],
     lists:foldl(
@@ -431,16 +435,14 @@ allowed_implication(_) ->
     true.
 
 
-useful_to_prove(#ps{intro_blocked = IB, elim_blocked = EB, disjunctions = DJ}) ->
-    A = maps:keys(IB),
-    B = maps:keys(EB),
-    C = lists:merge(maps:values(IB)),
-    D = lists:merge(maps:values(EB)),
-    E = maps:keys(DJ),
+useful_to_prove(#ps{blocked = Blocked, disjunctions = DJ}) ->
+    A = maps:keys(Blocked),
+    B = [element(2, N) || N <- lists:merge(maps:values(Blocked))],
+    C = maps:keys(DJ),
     [
         N
     ||
-        N <- lists:usort(A ++ B ++ C ++ D ++ E),
+        N <- lists:usort(A ++ B ++ C),
         not is_double_negated(N),
         not is_implication(N),
         N =/= false
