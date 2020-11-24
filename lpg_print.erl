@@ -174,8 +174,10 @@ expr_to_string({A0, Op, B0}) ->
         " ",
         (fix_precedence(B0, lower_precedence_ops(Op, right)))/binary
     >>;
-expr_to_string(P) ->
-    atom_to_binary(P, utf8).
+expr_to_string(P) when is_atom(P) ->
+    atom_to_binary(P, utf8);
+expr_to_string(P) when is_binary(P) ->
+    P.
 
 
 fix_precedence({_, Op, _} = Expr, Ops) ->
