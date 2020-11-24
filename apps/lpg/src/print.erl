@@ -1,4 +1,4 @@
--module(lpg_print).
+-module(print).
 
 -export(
     [

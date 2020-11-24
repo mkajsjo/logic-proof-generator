@@ -177,6 +177,8 @@ parse_disjunction(Acc, []) ->
     {error, lists:reverse(Acc)}.
 
 
+parse_proposition([false]) ->
+    {ok, false};
 parse_proposition([<<P>>]) ->
     {ok, <<P>>};
 parse_proposition(Rest) ->
