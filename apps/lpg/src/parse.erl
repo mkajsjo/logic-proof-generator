@@ -2,13 +2,28 @@
 
 -export(
     [
-        sequent/1
+        sequent/1,
+        expr/1
     ]
 ).
 
 
 sequent(String) ->
-    parse_sequent({[], []}, tokenize(String)).
+    case parse_sequent({[], []}, tokenize(String)) of
+        {ok, Expr} ->
+            {ok, Expr};
+        {error, Tokens} ->
+            {error, detokenize(Tokens)}
+    end.
+
+
+expr(String) ->
+    case parse_expr(tokenize(String)) of
+        {ok, Expr} ->
+            {ok, Expr};
+        {error, Tokens} ->
+            {error, detokenize(Tokens)}
+    end.
 
 
 tokenize(<<>>) ->
@@ -37,6 +52,14 @@ tokenize(<<P:8, Rest/binary>>) when P >= $a, P =< $z; P >= $A, P =< $Z ->
     [<<P>> | tokenize(Rest)].
 
 
+detokenize([]) ->
+    <<>>;
+detokenize([Token | Tokens]) when is_atom(Token) ->
+    <<(atom_to_binary(Token, utf8))/binary, (detokenize(Tokens))/binary>>;
+detokenize([Token | Tokens]) ->
+    <<Token/binary, (detokenize(Tokens))/binary>>.
+
+
 parse_sequent({Exprs, Unparsed}, [',' | Tokens]) ->
     case parse_expr(lists:reverse(Unparsed)) of
         {ok, Expr} ->
@@ -44,6 +67,10 @@ parse_sequent({Exprs, Unparsed}, [',' | Tokens]) ->
         {error, Rest} ->
             {error, Rest ++ [',' | Tokens]}
     end;
+parse_sequent(_, ['|-']) ->
+    {error, ['|-']};
+parse_sequent({[], []}, [',' | Tokens]) ->
+    {error, [',' | Tokens]};
 parse_sequent({Exprs, Unparsed}, ['|-' | Tokens]) ->
     case parse_expr(lists:reverse(Unparsed)) of
         {ok, Expr} ->
@@ -54,12 +81,12 @@ parse_sequent({Exprs, Unparsed}, ['|-' | Tokens]) ->
                     {error, Rest}
             end;
         {error, Rest} ->
-            {error, Rest ++ [',' | Tokens]}
+            {error, Rest ++ ['|-' | Tokens]}
     end;
 parse_sequent({Exprs, Unparsed}, [T | Tokens]) ->
     parse_sequent({Exprs, [T | Unparsed]}, Tokens);
-parse_sequent(Acc, []) ->
-    {error, lists:reverse(Acc)}.
+parse_sequent({_, Unparsed}, []) ->
+    {error, lists:reverse(Unparsed)}.
 
 
 parse_expr(Expr) ->
@@ -67,15 +94,15 @@ parse_expr(Expr) ->
         {ok, Result} ->
             {ok, Result};
         {error, _} ->
-            case parse_implication([], lists:reverse(Expr)) of
+            case parse_implication([], Expr) of
                 {ok, Result} ->
                     {ok, Result};
                 {error, _} ->
-                    case parse_conjunction([], Expr) of
+                    case parse_disjunction([], lists:reverse(Expr)) of
                         {ok, Result} ->
                             {ok, Result};
-                        {error, Rest} ->
-                            case parse_disjunction([], Expr) of
+                        {error, _} ->
+                            case parse_conjunction([], lists:reverse(Expr)) of
                                 {ok, Result} ->
                                     {ok, Result};
                                 {error, _} ->
@@ -124,28 +151,28 @@ parse_paranthesis(Rest) ->
 
 
 parse_implication(Acc, ['->' | Tokens]) ->
-    case parse_expr(Acc) of
-        {ok, B} ->
-            case parse_expr(lists:reverse(Tokens)) of
-                {ok, A} ->
+    case parse_expr(lists:reverse(Acc)) of
+        {ok, A} ->
+            case parse_expr(Tokens) of
+                {ok, B} ->
                     {ok, {A, '->', B}};
                 {error, Rest} ->
                     {error, Rest}
             end;
         {error, Rest} ->
-            {error, Rest ++ lists:reverse(Tokens)}
+            {error, Rest ++ Tokens}
     end;
 parse_implication(Acc, [T | Tokens]) ->
     parse_implication([T | Acc], Tokens);
 parse_implication(Acc, []) ->
-    {error, Acc}.
+    {error, lists:reverse(Acc)}.
 
 
 parse_conjunction(Acc, ['&' | Tokens]) ->
-    case parse_expr(lists:reverse(Acc)) of
-        {ok, A} ->
-            case parse_expr(Tokens) of
-                {ok, B} ->
+    case parse_expr(Acc) of
+        {ok, B} ->
+            case parse_expr(lists:reverse(Tokens)) of
+                {ok, A} ->
                     {ok, {A, '&', B}};
                 {error, Rest} ->
                     {error, Rest}
@@ -156,14 +183,14 @@ parse_conjunction(Acc, ['&' | Tokens]) ->
 parse_conjunction(Acc, [T | Tokens]) ->
     parse_conjunction([T | Acc], Tokens);
 parse_conjunction(Acc, []) ->
-    {error, lists:reverse(Acc)}.
+    {error, Acc}.
 
 
 parse_disjunction(Acc, ['|' | Tokens]) ->
-    case parse_expr(lists:reverse(Acc)) of
-        {ok, A} ->
-            case parse_expr(Tokens) of
-                {ok, B} ->
+    case parse_expr(Acc) of
+        {ok, B} ->
+            case parse_expr(lists:reverse(Tokens)) of
+                {ok, A} ->
                     {ok, {A, '|', B}};
                 {error, Rest} ->
                     {error, Rest}
@@ -174,7 +201,7 @@ parse_disjunction(Acc, ['|' | Tokens]) ->
 parse_disjunction(Acc, [T | Tokens]) ->
     parse_disjunction([T | Acc], Tokens);
 parse_disjunction(Acc, []) ->
-    {error, lists:reverse(Acc)}.
+    {error, Acc}.
 
 
 parse_proposition([false]) ->
