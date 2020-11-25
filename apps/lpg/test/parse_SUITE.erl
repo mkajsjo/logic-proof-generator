@@ -30,7 +30,8 @@
         conjunction_missing_operand/1,
         disjunction_missing_operand/1,
         negation_missing_operand/1,
-        sequent_missing_exprs/1,
+        sequent_no_premises/1,
+        sequent_missing_premises/1,
         sequent_missing_conclusion/1
     ]
 ).
@@ -76,7 +77,8 @@ groups() ->
                 conjunction_missing_operand,
                 disjunction_missing_operand,
                 negation_missing_operand,
-                sequent_missing_exprs,
+                sequent_no_premises,
+                sequent_missing_premises,
                 sequent_missing_conclusion
             ]
         }
@@ -277,26 +279,25 @@ negation_missing_operand(_Config) ->
     ).
 
 
-sequent_missing_exprs(_Config) ->
+sequent_no_premises(_Config) ->
+    ?assertEqual(
+        {ok, {[], '|-', <<"q">>}},
+        parse:sequent(<<"|- q">>)
+    ).
+
+
+sequent_missing_premises(_Config) ->
     ?assertEqual(
         {error, <<",p|-q">>},
         parse:sequent(<<", p |- q">>)
     ),
     ?assertEqual(
-        {error, <<"|-q">>},
+        {error, <<",|-q">>},
         parse:sequent(<<"p, |- q">>)
-    ),
-    ?assertEqual(
-        {error, <<"|-q">>},
-        parse:sequent(<<"|- q">>)
     ),
     ?assertEqual(
         {error, <<",q|-q">>},
         parse:sequent(<<"p,, q |- q">>)
-    ),
-    ?assertEqual(
-        {error, <<"p">>},
-        parse:sequent(<<"p">>)
     ).
 
 
@@ -308,6 +309,10 @@ sequent_missing_conclusion(_Config) ->
     ?assertEqual(
         {error, <<"q">>},
         parse:sequent(<<"p, q">>)
+    ),
+    ?assertEqual(
+        {error, <<"p">>},
+        parse:sequent(<<"p">>)
     ).
 
 

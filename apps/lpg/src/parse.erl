@@ -60,6 +60,12 @@ detokenize([Token | Tokens]) ->
     <<Token/binary, (detokenize(Tokens))/binary>>.
 
 
+parse_sequent(_, ['|-']) ->
+    {error, ['|-']};
+parse_sequent(_, [',', '|-' | _] = Tokens) ->
+    {error, Tokens};
+parse_sequent({[], []}, [',' | Tokens]) ->
+    {error, [',' | Tokens]};
 parse_sequent({Exprs, Unparsed}, [',' | Tokens]) ->
     case parse_expr(lists:reverse(Unparsed)) of
         {ok, Expr} ->
@@ -67,10 +73,13 @@ parse_sequent({Exprs, Unparsed}, [',' | Tokens]) ->
         {error, Rest} ->
             {error, Rest ++ [',' | Tokens]}
     end;
-parse_sequent(_, ['|-']) ->
-    {error, ['|-']};
-parse_sequent({[], []}, [',' | Tokens]) ->
-    {error, [',' | Tokens]};
+parse_sequent({Exprs, []}, ['|-' | Tokens]) ->
+    case parse_expr(Tokens) of
+        {ok, Conclusion} ->
+            {ok, {lists:reverse(Exprs), '|-', Conclusion}};
+        {error, Rest} ->
+            {error, Rest}
+    end;
 parse_sequent({Exprs, Unparsed}, ['|-' | Tokens]) ->
     case parse_expr(lists:reverse(Unparsed)) of
         {ok, Expr} ->

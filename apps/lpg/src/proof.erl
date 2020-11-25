@@ -3,6 +3,7 @@
 
 -export(
     [
+        solve/1,
         find_dm/0,
         find_dm2/0,
         find_q1/0,
@@ -27,6 +28,20 @@
         disjunctions = #{}
     }
 ).
+
+
+solve(BinarySequent) ->
+    case parse:sequent(BinarySequent) of
+        {ok, Sequent} ->
+            case find(Sequent) of
+                no_proof_found ->
+                    io:fwrite("No proof found~n");
+                Proof ->
+                    print:print_proof(Proof)
+            end;
+        {error, Error} ->
+            io:fwrite("Error: ~p~n", [Error])
+    end.
 
 
 find_dm() ->
