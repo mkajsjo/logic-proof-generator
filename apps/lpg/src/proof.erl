@@ -36,7 +36,7 @@ solve(BinarySequent) ->
             case find(Sequent) of
                 no_proof_found ->
                     io:fwrite("No proof found~n");
-                Proof ->
+                {proof_found, Proof} ->
                     print:print_proof(Proof)
             end;
         {error, Error} ->
@@ -98,7 +98,7 @@ prove(PS) ->
     %TODO counter proof check?
     case is_proved(PS#ps.conclusion, PS) of
         true ->
-            build_proof(PS);
+            {proof_found, build_proof(PS)};
         false ->
             PS2 = start_assumptions(PS),
             case nr_proved(PS2) =:= nr_proved(PS) of
