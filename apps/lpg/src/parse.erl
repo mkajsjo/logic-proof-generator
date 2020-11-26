@@ -165,11 +165,11 @@ parse_implication(Acc, ['->' | Tokens]) ->
             case parse_expr(Tokens) of
                 {ok, B} ->
                     {ok, {A, '->', B}};
-                {error, Rest} ->
-                    {error, Rest}
+                {error, _} ->
+                    parse_implication(['->' | Acc], Tokens)
             end;
-        {error, Rest} ->
-            {error, Rest ++ Tokens}
+        {error, _} ->
+            parse_implication(['->' | Acc], Tokens)
     end;
 parse_implication(Acc, [T | Tokens]) ->
     parse_implication([T | Acc], Tokens);
@@ -183,11 +183,11 @@ parse_conjunction(Acc, ['&' | Tokens]) ->
             case parse_expr(lists:reverse(Tokens)) of
                 {ok, A} ->
                     {ok, {A, '&', B}};
-                {error, Rest} ->
-                    {error, Rest}
+                {error, _} ->
+                    parse_conjunction(['&' | Acc], Tokens)
             end;
-        {error, Rest} ->
-            {error, Rest ++ Tokens}
+        {error, _} ->
+            parse_conjunction(['&' | Acc], Tokens)
     end;
 parse_conjunction(Acc, [T | Tokens]) ->
     parse_conjunction([T | Acc], Tokens);
@@ -201,11 +201,11 @@ parse_disjunction(Acc, ['|' | Tokens]) ->
             case parse_expr(lists:reverse(Tokens)) of
                 {ok, A} ->
                     {ok, {A, '|', B}};
-                {error, Rest} ->
-                    {error, Rest}
+                {error, _} ->
+                    parse_disjunction(['|' | Acc], Tokens)
             end;
-        {error, Rest} ->
-            {error, Rest ++ Tokens}
+        {error, _} ->
+            parse_disjunction(['|' | Acc], Tokens)
     end;
 parse_disjunction(Acc, [T | Tokens]) ->
     parse_disjunction([T | Acc], Tokens);

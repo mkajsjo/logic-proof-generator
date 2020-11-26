@@ -32,7 +32,10 @@
         negation_missing_operand/1,
         sequent_no_premises/1,
         sequent_missing_premises/1,
-        sequent_missing_conclusion/1
+        sequent_missing_conclusion/1,
+        implication_with_parenthesis/1,
+        disjunction_with_parenthesis/1,
+        conjunction_with_parenthesis/1
     ]
 ).
 
@@ -79,7 +82,10 @@ groups() ->
                 negation_missing_operand,
                 sequent_no_premises,
                 sequent_missing_premises,
-                sequent_missing_conclusion
+                sequent_missing_conclusion,
+                implication_with_parenthesis,
+                disjunction_with_parenthesis,
+                conjunction_with_parenthesis
             ]
         }
     ].
@@ -316,5 +322,24 @@ sequent_missing_conclusion(_Config) ->
     ).
 
 
+implication_with_parenthesis(_Config) ->
+    ?assertEqual(
+        {ok, {{<<"p">>, '->', <<"q">>}, '->', <<"r">>}},
+        parse:expr(<<"(p -> q) -> r">>)
+    ).
+
+
+disjunction_with_parenthesis(_Config) ->
+    ?assertEqual(
+        {ok, {<<"p">>, '|', {<<"q">>, '|', <<"r">>}}},
+        parse:expr(<<"p | (q | r)">>)
+    ).
+
+
+conjunction_with_parenthesis(_Config) ->
+    ?assertEqual(
+        {ok, {<<"p">>, '&', {<<"q">>, '&', <<"r">>}}},
+        parse:expr(<<"p & (q & r)">>)
+    ).
 
 
