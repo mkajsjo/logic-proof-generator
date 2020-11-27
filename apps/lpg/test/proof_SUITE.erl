@@ -38,7 +38,7 @@
         implication_language_equivalence2/1,
         disjunction_language_equivalence1/1,
         disjunction_language_equivalence2/1,
-%        conjunction_language_equivalence1/1,
+        conjunction_language_equivalence1/1,
         conjunction_language_equivalence2/1
     ]
 ).
@@ -92,7 +92,7 @@ groups() ->
                 implication_language_equivalence2,
                 disjunction_language_equivalence1,
                 disjunction_language_equivalence2,
-%                conjunction_language_equivalence1,
+                conjunction_language_equivalence1,
                 conjunction_language_equivalence2
             ]
         }
@@ -302,11 +302,11 @@ disjunction_language_equivalence2(_Config) ->
     {proof_found, _} = proof:find(Sequent8).
 
 
-%conjunction_language_equivalence1(_Config) ->
-%    {ok, Sequent9} = parse:sequent(<<"p & q |- !(p -> !q)">>),
-%    {proof_found, _} = proof:find(Sequent9),
-%    {ok, Sequent10} = parse:sequent(<<"!(p -> !q) |- p & q">>),
-%    {proof_found, _} = proof:find(Sequent10).
+conjunction_language_equivalence1(_Config) ->
+    {ok, Sequent9} = parse:sequent(<<"p & q |- !(p -> !q)">>),
+    {proof_found, _} = proof:find(Sequent9),
+    {ok, Sequent10} = parse:sequent(<<"!(p -> !q) |- p & q">>),
+    {proof_found, _} = proof:find(Sequent10).
 
 
 conjunction_language_equivalence2(_Config) ->

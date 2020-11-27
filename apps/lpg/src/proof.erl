@@ -108,9 +108,6 @@ prove(PS) ->
             case nr_proved(PS2) =:= nr_proved(PS)
                  andalso PS#ps.allowed_assumption_depth =:= ?ALLOWED_ASSUMPTION_DEPTH of
                 true ->
-                    io:fwrite("PS2#ps.proved: ~p~n",
-                              [[P || P <- maps:keys(PS#ps.proved), is_tuple(P) andalso element(1, P)
-                                     =:= {<<"q">>}]]),
                     no_proof_found;
                 false ->
                     prove(PS2#ps{allowed_assumption_depth = PS#ps.allowed_assumption_depth + 1})
@@ -345,28 +342,22 @@ start_assumptions(#ps{extra_assumables = A, blocked = B, conclusion = C, disjunc
 
 
 allowed_assumption(Expr, PS) ->
-    case is_proved(Expr, PS) of
+    PreviousAssumptions = previous_assumptions(PS),
+    case in_disjunction(Expr, PS) of
         true ->
-            false;
+            not lists:member(Expr, PreviousAssumptions);
         false ->
-            PreviousAssumptions = previous_assumptions(PS),
-            case in_disjunction(Expr, PS) of
-                true ->
-                    not lists:member(Expr, PreviousAssumptions);
-                false ->
-                    Banned =
-                        case Expr of
-                            {'!', {'!', _}} ->
-                                true;
-                            {A, '&', B} ->
-                                is_proved(A, PS) orelse is_proved(B, PS);
-                            _ ->
-                                false
-                        end,
-                    not Banned
-                    andalso not lists:member(Expr, PreviousAssumptions)
-                    andalso not lists:member(negate(Expr), PreviousAssumptions)
-            end
+            Banned =
+                case Expr of
+                    {A, '&', B} ->
+                        is_proved(A, PS) orelse is_proved(B, PS);
+                    _ ->
+                        false
+                end,
+            not Banned
+            andalso not is_double_negated(Expr)
+            andalso not lists:member(Expr, PreviousAssumptions)
+            andalso not lists:member(negate(Expr), PreviousAssumptions)
     end.
 
 
@@ -386,7 +377,16 @@ negate(Expr) ->
     {'!', Expr}.
 
 
-start_assumption(Assumption, PS) ->
+start_assumption(Assumption, PS0) ->
+    % Hack to make an assumption that has already been proved
+    % if an introduction of an implication is blocked.
+    PS =
+        case ordsets:is_element(Assumption, PS0#ps.extra_assumables) of
+            true ->
+                PS0#ps{proved = maps:remove(Assumption, PS0#ps.proved)};
+            false ->
+                PS0
+        end,
     % Assumption could have been proved from previous assumption.
     case is_proved(Assumption, PS) orelse is_proved(false, PS) of
         true ->
@@ -443,7 +443,9 @@ end_assumption(#ps{assumption = A, parent = P, proved_in_assumption = Proved, ne
     UsefulToProve = useful_to_prove(P),
     lists:foldl(
         fun (N, Acc) ->
-                case lists:member(N, UsefulToProve) orelse lists:member({A, '->', N}, UsefulToProve) of
+                case lists:member(N, UsefulToProve)
+                     orelse lists:member({A, '->', N}, UsefulToProve)
+                     orelse lists:member({'!', {A, '->', N}}, UsefulToProve) of
                 true ->
                     add_proof({'->i', [A, N]}, {A, '->', N}, Acc);
                 false ->
@@ -466,8 +468,15 @@ useful_to_prove(#ps{blocked = Blocked, extra_implied = EI, disjunctions = DJ}) -
         N
     ||
         N <- lists:usort(A ++ B ++ C),
-        N =/= false %TODO this false + list comprehension is probably not needed
+        not is_double_negated(N),
+        N =/= false
     ].
+
+
+is_double_negated({'!', {'!', _}}) ->
+    true;
+is_double_negated(_) ->
+    false.
 
 
 add_proof_rule({'|e', [Dj, ImplA, ImplB]}, Expr, PS) ->
