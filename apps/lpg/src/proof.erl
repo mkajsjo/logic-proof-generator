@@ -11,6 +11,7 @@
     ]
 ).
 
+-define(ALLOWED_ASSUMPTION_DEPTH, 5).
 
 -record(
     ps,
@@ -18,6 +19,9 @@
         proved = #{},
         proved_in_assumption = #{},
         assumption,
+        allowed_assumption_depth = 1,
+        extra_assumables = ordsets:new(),
+        extra_implied = ordsets:new(),
         next_proof_ref = 0,
         blocked = #{},
         conclusion,
@@ -101,11 +105,15 @@ prove(PS) ->
             {proof_found, build_proof(PS)};
         false ->
             PS2 = start_assumptions(PS),
-            case nr_proved(PS2) =:= nr_proved(PS) of
+            case nr_proved(PS2) =:= nr_proved(PS)
+                 andalso PS#ps.allowed_assumption_depth =:= ?ALLOWED_ASSUMPTION_DEPTH of
                 true ->
+                    io:fwrite("PS2#ps.proved: ~p~n",
+                              [[P || P <- maps:keys(PS#ps.proved), is_tuple(P) andalso element(1, P)
+                                     =:= {<<"q">>}]]),
                     no_proof_found;
                 false ->
-                    prove(PS2)
+                    prove(PS2#ps{allowed_assumption_depth = PS#ps.allowed_assumption_depth + 1})
             end
     end.
 
@@ -121,6 +129,11 @@ intro({A, '|', B} = Expr, PS) ->
     add_intro_if_proved({'|i2', [B]}, Expr, PS2);
 intro({'!', {'!', A}} = Expr, PS) ->
     add_intro_if_proved({'!!i', [A]}, Expr, PS);
+intro({A, '->', B}, PS) ->
+    PS#ps{
+        extra_assumables = ordsets:add_element(A, PS#ps.extra_assumables),
+        extra_implied = ordsets:add_element(B, PS#ps.extra_implied)
+    };
 intro(_, PS) ->
     PS.
 
@@ -135,12 +148,12 @@ elim(false, PS) ->
     );
 elim(Expr, PS) ->
     PS2 = elim_(Expr, PS),
-    Rule = {'!e', [Expr, {'!', Expr}]},
-    case is_proved({'!', Expr}, PS2) of
+    Rule = {'!e', [Expr, negate(Expr)]},
+    case is_proved(negate(Expr), PS2) of
         true ->
             add_proof(Rule, false, PS2);
         false ->
-            block({'!', Expr}, Rule, false, PS2)
+            PS2
     end.
 
 
@@ -314,35 +327,47 @@ add_proof_(
     end.
 
 
-start_assumptions(#ps{blocked = B, conclusion = C} = PS) ->
+start_assumptions(#ps{allowed_assumption_depth = 0} = PS) ->
+    PS;
+start_assumptions(#ps{extra_assumables = A, blocked = B, conclusion = C, disjunctions = D} = PS) ->
     NewAssumptions =
         [
-            A
+            N
         ||
-            A <- maps:keys(B) ++ [negate(C)],
-            allowed_assumption(A, PS)
+            N <- lists:usort(ordsets:to_list(A) ++ maps:keys(B) ++ [negate(C)] ++ maps:keys(D)),
+            allowed_assumption(N, PS)
         ],
     lists:foldl(
         fun start_assumption/2,
-        PS,
+        PS#ps{allowed_assumption_depth = PS#ps.allowed_assumption_depth - 1},
         NewAssumptions
     ).
 
 
 allowed_assumption(Expr, PS) ->
-    PreviousAssumptions = previous_assumptions(PS),
-    Banned =
-        case Expr of
-            {A, '&', B} ->
-                is_proved(A, PS) orelse is_proved(B, PS);
-            _ ->
-                false
-        end,
-    not Banned
-    andalso not is_proved(negate(Expr), PS)
-    andalso not is_double_negated(Expr)
-    andalso not lists:member(Expr, PreviousAssumptions)
-    andalso not lists:member(negate(Expr), PreviousAssumptions).
+    case is_proved(Expr, PS) of
+        true ->
+            false;
+        false ->
+            PreviousAssumptions = previous_assumptions(PS),
+            case in_disjunction(Expr, PS) of
+                true ->
+                    not lists:member(Expr, PreviousAssumptions);
+                false ->
+                    Banned =
+                        case Expr of
+                            {'!', {'!', _}} ->
+                                true;
+                            {A, '&', B} ->
+                                is_proved(A, PS) orelse is_proved(B, PS);
+                            _ ->
+                                false
+                        end,
+                    not Banned
+                    andalso not lists:member(Expr, PreviousAssumptions)
+                    andalso not lists:member(negate(Expr), PreviousAssumptions)
+            end
+    end.
 
 
 previous_assumptions(#ps{parent = undefined}) ->
@@ -351,22 +376,14 @@ previous_assumptions(#ps{assumption = A, parent = P}) ->
     [A | previous_assumptions(P)].
 
 
+in_disjunction(Expr, PS) ->
+    maps:is_key(Expr, PS#ps.disjunctions).
+
+
 negate({'!', Expr}) ->
     Expr;
 negate(Expr) ->
     {'!', Expr}.
-
-
-is_double_negated({'!', {'!', _}}) ->
-    true;
-is_double_negated(_) ->
-    false.
-
-
-is_implication({_, '->', _}) ->
-    true;
-is_implication(_) ->
-    false.
 
 
 start_assumption(Assumption, PS) ->
@@ -422,15 +439,11 @@ end_assumption(#ps{assumption = A, parent = P, proved_in_assumption = Proved, ne
             _ ->
                 PS
         end,
-    NewProofs =
-        [
-            N
-        ||
-            N <- maps:keys(maps:with(useful_to_prove(P), Proved))
-        ],
+    NewProofs = [A] ++ maps:keys(PS0#ps.proved) ++ maps:keys(PS0#ps.proved_in_assumption),
+    UsefulToProve = useful_to_prove(P),
     lists:foldl(
         fun (N, Acc) ->
-            case allowed_implication({A, '->', N}) of
+                case lists:member(N, UsefulToProve) orelse lists:member({A, '->', N}, UsefulToProve) of
                 true ->
                     add_proof({'->i', [A, N]}, {A, '->', N}, Acc);
                 false ->
@@ -442,25 +455,18 @@ end_assumption(#ps{assumption = A, parent = P, proved_in_assumption = Proved, ne
     ).
 
 
-allowed_implication({{A, '&', _}, '->', A}) ->
-    false;
-allowed_implication({{_, '&', A}, '->', A}) ->
-    false;
-allowed_implication(_) ->
-    true.
-
-
-useful_to_prove(#ps{blocked = Blocked, disjunctions = DJ}) ->
+useful_to_prove(#ps{blocked = Blocked, extra_implied = EI, disjunctions = DJ}) ->
     A = maps:keys(Blocked),
-    B = [element(2, N) || N <- lists:merge(maps:values(Blocked))],
+    B = ordsets:to_list(EI),
+    %TODO not including B will result in unnessary steps in the proof
+    %but maybe it is better to filter them out after the proof is found?
+    %B = [element(2, N) || N <- lists:merge(maps:values(Blocked))],
     C = maps:keys(DJ),
     [
         N
     ||
         N <- lists:usort(A ++ B ++ C),
-        not is_double_negated(N),
-        not is_implication(N),
-        N =/= false
+        N =/= false %TODO this false + list comprehension is probably not needed
     ].
 
 
