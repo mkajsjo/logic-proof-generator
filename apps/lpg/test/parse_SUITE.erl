@@ -35,7 +35,9 @@
         sequent_missing_conclusion/1,
         implication_with_parenthesis/1,
         disjunction_with_parenthesis/1,
-        conjunction_with_parenthesis/1
+        conjunction_with_parenthesis/1,
+        implication_to_disjunction/1,
+        implication_to_conjunction/1
     ]
 ).
 
@@ -85,7 +87,9 @@ groups() ->
                 sequent_missing_conclusion,
                 implication_with_parenthesis,
                 disjunction_with_parenthesis,
-                conjunction_with_parenthesis
+                conjunction_with_parenthesis,
+                implication_to_disjunction,
+                implication_to_conjunction
             ]
         }
     ].
@@ -340,6 +344,20 @@ conjunction_with_parenthesis(_Config) ->
     ?assertEqual(
         {ok, {<<"p">>, '&', {<<"q">>, '&', <<"r">>}}},
         parse:expr(<<"p & (q & r)">>)
+    ).
+
+
+implication_to_disjunction(_Config) ->
+    ?assertEqual(
+        {ok, {<<"p">>, '->', {<<"q">>, '|', <<"r">>}}},
+        parse:expr(<<"p -> q | r">>)
+    ).
+
+
+implication_to_conjunction(_Config) ->
+    ?assertEqual(
+        {ok, {<<"p">>, '->', {<<"q">>, '&', <<"r">>}}},
+        parse:expr(<<"p -> q & r">>)
     ).
 
 

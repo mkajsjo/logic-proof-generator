@@ -25,7 +25,7 @@
         implication_distributive_law2/1,
         implication_distributive_law3/1,
         exportation_law/1,
-        %addition/1,
+        addition/1,
         simplification/1,
         modus_ponens/1,
         modus_tollens/1,
@@ -33,8 +33,13 @@
         disjunctive_syllogism/1,
         duns_scotus/1,
         clavius/1,
-        frege/1
-        %equivalence_of_languages/1
+        frege/1,
+        implication_language_equivalence1/1,
+        implication_language_equivalence2/1,
+        disjunction_language_equivalence1/1,
+        disjunction_language_equivalence2/1,
+%        conjunction_language_equivalence1/1,
+        conjunction_language_equivalence2/1
     ]
 ).
 
@@ -52,7 +57,7 @@ groups() ->
     [
         {
             group1,
-            [parallel],
+            [sequence],
             [
                 law_of_excluded_middle,
                 law_of_non_contradiction,
@@ -74,7 +79,7 @@ groups() ->
                 implication_distributive_law2,
                 implication_distributive_law3,
                 exportation_law,
-                %addition,
+                addition,
                 simplification,
                 modus_ponens,
                 modus_tollens,
@@ -82,8 +87,13 @@ groups() ->
                 disjunctive_syllogism,
                 duns_scotus,
                 clavius,
-                frege
-                %equivalence_of_languages
+                frege,
+                implication_language_equivalence1,
+                implication_language_equivalence2,
+                disjunction_language_equivalence1,
+                disjunction_language_equivalence2,
+%                conjunction_language_equivalence1,
+                conjunction_language_equivalence2
             ]
         }
     ].
@@ -219,9 +229,9 @@ exportation_law(_Config) ->
     {proof_found, _} = proof:find(Sequent2).
 
 
-%addition(_Config) ->
-%    {ok, Sequent} = parse:sequent(<<"p -> p | q">>),
-%    {proof_found, _} = proof:find(Sequent).
+addition(_Config) ->
+    {ok, Sequent} = parse:sequent(<<"|- p -> p | q">>),
+    {proof_found, _} = proof:find(Sequent).
 
 
 simplification(_Config) ->
@@ -264,39 +274,45 @@ frege(_Config) ->
     {proof_found, _} = proof:find(Sequent).
 
 
-%equivalence_of_languages(_Config) ->
-%    % Definability of implication in terms of
-%    % negation, and disjunction or conjunction.
-%    {ok, Sequent} = parse:sequent(<<"p -> q |- !p | q">>),
-%    {proof_found, _} = proof:find(Sequent),
-%    {ok, Sequent2} = parse:sequent(<<"!p | q |- p -> q">>),
-%    {proof_found, _} = proof:find(Sequent2),
-%    {ok, Sequent3} = parse:sequent(<<"p -> q |- !(p & !q)">>),
-%    {proof_found, _} = proof:find(Sequent3),
-%    {ok, Sequent4} = parse:sequent(<<"!(p & !q) |- p -> q">>),
-%    {proof_found, _} = proof:find(Sequent4),
-%
-%    % Definability of disjunction in terms of
-%    % negation, and implication or conjunction.
-%    {ok, Sequent5} = parse:sequent(<<"p | q |- !p -> q">>),
-%    {proof_found, _} = proof:find(Sequent5),
-%    {ok, Sequent6} = parse:sequent(<<"!p -> q |- p | q">>),
-%    {proof_found, _} = proof:find(Sequent6),
-%    {ok, Sequent7} = parse:sequent(<<"p | q |- !(!p & !q)">>),
-%    {proof_found, _} = proof:find(Sequent7),
-%    {ok, Sequent8} = parse:sequent(<<"!(!p & !q) |- p | q">>),
-%    {proof_found, _} = proof:find(Sequent8),
-%
-%    % Definability of conjunction in terms of
-%    % negation, and implication or disjunction.
+implication_language_equivalence1(_Config) ->
+    {ok, Sequent} = parse:sequent(<<"p -> q |- !p | q">>),
+    {proof_found, _} = proof:find(Sequent),
+    {ok, Sequent2} = parse:sequent(<<"!p | q |- p -> q">>),
+    {proof_found, _} = proof:find(Sequent2).
+
+
+implication_language_equivalence2(_Config) ->
+    {ok, Sequent3} = parse:sequent(<<"p -> q |- !(p & !q)">>),
+    {proof_found, _} = proof:find(Sequent3),
+    {ok, Sequent4} = parse:sequent(<<"!(p & !q) |- p -> q">>),
+    {proof_found, _} = proof:find(Sequent4).
+
+
+disjunction_language_equivalence1(_Config) ->
+    {ok, Sequent5} = parse:sequent(<<"p | q |- !p -> q">>),
+    {proof_found, _} = proof:find(Sequent5),
+    {ok, Sequent6} = parse:sequent(<<"!p -> q |- p | q">>),
+    {proof_found, _} = proof:find(Sequent6).
+
+
+disjunction_language_equivalence2(_Config) ->
+    {ok, Sequent7} = parse:sequent(<<"p | q |- !(!p & !q)">>),
+    {proof_found, _} = proof:find(Sequent7),
+    {ok, Sequent8} = parse:sequent(<<"!(!p & !q) |- p | q">>),
+    {proof_found, _} = proof:find(Sequent8).
+
+
+%conjunction_language_equivalence1(_Config) ->
 %    {ok, Sequent9} = parse:sequent(<<"p & q |- !(p -> !q)">>),
 %    {proof_found, _} = proof:find(Sequent9),
 %    {ok, Sequent10} = parse:sequent(<<"!(p -> !q) |- p & q">>),
-%    {proof_found, _} = proof:find(Sequent10),
-%    {ok, Sequent11} = parse:sequent(<<"p & q |- !(!p | !q)">>),
-%    {proof_found, _} = proof:find(Sequent11),
-%    {ok, Sequent12} = parse:sequent(<<"!(!p | !q) |- p & q">>),
-%    {proof_found, _} = proof:find(Sequent12).
+%    {proof_found, _} = proof:find(Sequent10).
 
+
+conjunction_language_equivalence2(_Config) ->
+    {ok, Sequent11} = parse:sequent(<<"p & q |- !(!p | !q)">>),
+    {proof_found, _} = proof:find(Sequent11),
+    {ok, Sequent12} = parse:sequent(<<"!(!p | !q) |- p & q">>),
+    {proof_found, _} = proof:find(Sequent12).
 
 
